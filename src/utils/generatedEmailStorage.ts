@@ -157,6 +157,42 @@ export function clearStoredGeneratedEmailsForTech(
 }
 
 /**
+ * Clears stored generated emails for specific work weeks (with optional technician filter).
+ */
+export function clearStoredGeneratedEmailsForWorkWeeks(
+  workWeeks: string[],
+  technicianName?: string
+): GeneratedEmailRecord[] {
+  const targetWeeks = new Set(workWeeks.map((w) => (w || "").trim().toLowerCase()));
+  const cleanTech =
+    technicianName && technicianName !== "all" ? cleanTechnicianName(technicianName).toLowerCase() : null;
+  const existing = getStoredGeneratedEmails();
+
+  const updated = existing.filter((e) => {
+    const eWeek = (e.workWeek || "").trim().toLowerCase();
+    const matchesWeek = targetWeeks.has(eWeek);
+    if (!matchesWeek) return true; // keep
+
+    if (cleanTech) {
+      // only delete if tech matches
+      if (e.cleanTechName.toLowerCase() === cleanTech) {
+        return false; // delete
+      }
+      return true; // keep for other techs
+    }
+
+    return false; // delete across all techs
+  });
+
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY_EMAILS, JSON.stringify(updated));
+  } catch (err) {
+    console.warn("Failed to clear work weeks from localStorage", err);
+  }
+  return updated;
+}
+
+/**
  * Retrieves generated emails for a specific technician and work week.
  */
 export function getGeneratedEmailsForTechAndWeek(
