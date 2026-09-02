@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0078D4" />
+      <stop offset="50%" stop-color="#005A9E" />
+      <stop offset="100%" stop-color="#004578" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22D3EE" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+    <linearGradient id="mailGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#E2E8F0" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.25" />
+    </filter>
+  </defs>
+
+  <!-- App Icon Base Squircle -->
+  <rect width="64" height="64" rx="14" fill="url(#bgGrad)" />
+
+  <!-- Outer Ring Accent -->
+  <rect x="1" y="1" width="62" height="62" rx="13" stroke="rgba(255,255,255,0.2)" stroke-width="2" fill="none" />
+
+  <!-- Mail Envelope Body (Outlook Dispatch Motif) -->
+  <g filter="url(#shadow)">
+    <!-- Envelope Base -->
+    <rect x="10" y="18" width="44" height="32" rx="4" fill="url(#mailGrad)" />
+    
+    <!-- Envelope Fold Lines -->
+    <path d="M10 20 L32 36 L54 20" stroke="#0078D4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+    
+    <!-- Dispatch Speed Lines / Schedule Details inside envelope -->
+    <line x1="16" y1="42" x2="30" y2="42" stroke="#94A3B8" stroke-width="2" stroke-linecap="round" />
+    <line x1="16" y1="36" x2="24" y2="36" stroke="#CBD5E1" stroke-width="2" stroke-linecap="round" />
+  </g>
+
+  <!-- Floating Dispatch Calendar / Speed Badge (Bottom Right) -->
+  <g filter="url(#shadow)">
+    <!-- Badge Background -->
+    <rect x="30" y="28" width="26" height="26" rx="6" fill="#0078D4" stroke="#FFFFFF" stroke-width="2" />
+    
+    <!-- Calendar Top Header Bar in Badge -->
+    <rect x="30" y="28" width="26" height="7" rx="4" fill="#004578" />
+    <rect x="30" y="32" width="26" height="3" fill="#004578" />
+    
+    <!-- Calendar Hanging Pins -->
+    <circle cx="36" cy="27" r="1.2" fill="#FFFFFF" />
+    <circle cx="50" cy="27" r="1.2" fill="#FFFFFF" />
+
+    <!-- Checkmark / Dispatch Indicator -->
+    <path d="M37 42 L41 46 L49 37" stroke="#38BDF8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+
+  <!-- Outlook O / Tech Spark Icon in Top Left Corner -->
+  <circle cx="17" cy="17" r="4.5" fill="#38BDF8" stroke="#FFFFFF" stroke-width="1.5" />
+  <circle cx="17" cy="17" r="1.5" fill="#004578" />
+</svg>
