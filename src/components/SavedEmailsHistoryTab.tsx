@@ -23,10 +23,12 @@ import {
   getStoredGeneratedEmails,
   deleteStoredGeneratedEmail,
   clearStoredGeneratedEmailsForTech,
+  clearStoredGeneratedEmailsForWorkWeeks,
   LOCAL_STORAGE_KEY_EMAILS,
 } from "../utils/generatedEmailStorage";
 import { cleanTechnicianName, copyRichHtmlToClipboard } from "../utils/outlookTemplateGenerator";
 import { EmailViewerModal } from "./EmailViewerModal";
+import { ClearWorkWeekModal } from "./ClearWorkWeekModal";
 
 interface SavedEmailsHistoryTabProps {
   activeTechName?: string;
@@ -46,6 +48,7 @@ export const SavedEmailsHistoryTab: React.FC<SavedEmailsHistoryTabProps> = ({
   const [copiedHtmlId, setCopiedHtmlId] = useState<string | null>(null);
   const [viewingRecord, setViewingRecord] = useState<GeneratedEmailRecord | null>(null);
   const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const [isClearWorkWeekModalOpen, setIsClearWorkWeekModalOpen] = useState(false);
   const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null);
 
   // Load history from localStorage
@@ -126,6 +129,17 @@ export const SavedEmailsHistoryTab: React.FC<SavedEmailsHistoryTabProps> = ({
     setTimeout(() => setFeedbackNotice(null), 3500);
   };
 
+  // Handle clear specific selected work weeks
+  const handleClearWorkWeeks = (selectedWeeks: string[], techName?: string) => {
+    const updated = clearStoredGeneratedEmailsForWorkWeeks(selectedWeeks, techName);
+    setHistory(updated);
+    const scopeLabel = techName ? ` for ${techName}` : "";
+    setFeedbackNotice(
+      `Cleared stored records for ${selectedWeeks.length} work week${selectedWeeks.length !== 1 ? "s" : ""}${scopeLabel}.`
+    );
+    setTimeout(() => setFeedbackNotice(null), 3500);
+  };
+
   // Handle copy subject
   const handleCopySubject = (id: string, text: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -202,6 +216,19 @@ export const SavedEmailsHistoryTab: React.FC<SavedEmailsHistoryTabProps> = ({
             <Download className="w-3.5 h-3.5 text-zinc-500" />
             <span>Export CSV</span>
           </button>
+
+          {/* Clear by Work Week button */}
+          {history.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsClearWorkWeekModalOpen(true)}
+              className="flex items-center space-x-1.5 text-xs font-semibold bg-white hover:bg-zinc-50 text-zinc-700 hover:text-zinc-900 px-3 py-1.75 rounded-lg border border-zinc-200 hover:border-zinc-300 shadow-2xs transition cursor-pointer"
+              title="Select and clear specific work weeks from history"
+            >
+              <Calendar className="w-3.5 h-3.5 text-zinc-500" />
+              <span>Clear by Work Week</span>
+            </button>
+          )}
 
           {/* Clear History button */}
           {history.length > 0 && (
@@ -491,6 +518,15 @@ export const SavedEmailsHistoryTab: React.FC<SavedEmailsHistoryTabProps> = ({
           onLoadIntoGenerator={onLoadSavedEmailIntoGenerator}
         />
       )}
+
+      {/* Clear Specific Work Weeks Modal */}
+      <ClearWorkWeekModal
+        isOpen={isClearWorkWeekModalOpen}
+        onClose={() => setIsClearWorkWeekModalOpen(false)}
+        history={history}
+        selectedTechFilter={selectedTechFilter}
+        onConfirmDelete={handleClearWorkWeeks}
+      />
     </div>
   );
 };
