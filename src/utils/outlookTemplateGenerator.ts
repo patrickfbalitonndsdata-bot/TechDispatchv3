@@ -987,13 +987,13 @@ export function groupDayOrdersByProject(
   });
 
   // 3. TEARDOWNS: Teardown Time supersedes Schedule Order
-  // If COD Exclusive is ON, group all COD teardowns together
+  // If COD Exclusive is ON, place non-COD teardowns (with earlier times) above and group all COD teardowns below (midnight/last)
   teardownOrders.sort((a, b) => {
     if (codExclusive) {
       const isCodA = Boolean(extractCodListKeyword(a));
       const isCodB = Boolean(extractCodListKeyword(b));
       if (isCodA !== isCodB) {
-        return isCodA ? -1 : 1;
+        return isCodA ? 1 : -1; // Place COD Exclusive teardowns below/after non-COD teardowns
       }
     }
 
