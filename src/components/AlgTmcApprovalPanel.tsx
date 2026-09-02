@@ -105,33 +105,58 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
       (f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")
     );
 
+    // Also check if any KMZ/KML files were dropped in the main dropzone
+    const kmzArray = Array.from(files).filter(
+      (f) =>
+        f.name.toLowerCase().endsWith(".kmz") ||
+        f.name.toLowerCase().endsWith(".kml") ||
+        f.type.includes("kml") ||
+        f.type.includes("kmz")
+    );
+    if (kmzArray.length > 0) {
+      handleKmzFiles(kmzArray);
+    }
+
     if (fileArray.length === 0) return;
 
     setIsLoading(true);
     try {
-      const filesToProcess = fileArray.slice(0, 2);
-      const results: ScannedPdfData[] = [];
+      // If 2 or 3 files are dropped/uploaded, process all of them up to 3
+      let filesToProcess: File[];
+      let shouldReplace = false;
 
+      if (fileArray.length >= 2 || pdfList.length >= 3) {
+        filesToProcess = fileArray.slice(0, 3);
+        shouldReplace = true;
+      } else {
+        const remainingSlots = Math.max(1, 3 - pdfList.length);
+        filesToProcess = fileArray.slice(0, remainingSlots);
+        shouldReplace = false;
+      }
+
+      const results: ScannedPdfData[] = [];
       for (const file of filesToProcess) {
         const scanned = await parsePdfFile(file, scheduleOption);
         results.push(scanned);
       }
 
       setPdfList((prev) => {
-        const combined = [...prev, ...results].slice(0, 2);
-        if (onScannedDataChange) onScannedDataChange(combined);
-        return combined;
+        const updated = shouldReplace ? results : [...prev, ...results].slice(0, 3);
+        if (onScannedDataChange) onScannedDataChange(updated);
+        if (updated.length >= 2) {
+          setActiveTab("combined");
+        } else {
+          setActiveTab(0);
+        }
+        return updated;
       });
-
-      if (pdfList.length + results.length >= 2) {
-        setActiveTab("combined");
-      } else {
-        setActiveTab(0);
-      }
     } catch (err) {
       console.error("Error parsing PDF file:", err);
     } finally {
       setIsLoading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   };
 
@@ -195,7 +220,7 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
       if (prev.some((p) => p.projectNumber === sample.projectNumber)) {
         return prev;
       }
-      const updated = [...prev, { ...sample }].slice(0, 2);
+      const updated = [...prev, { ...sample }].slice(0, 3);
       if (onScannedDataChange) onScannedDataChange(updated);
       return updated;
     });
@@ -203,7 +228,19 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
   };
 
   const handleLoadBothSamples = () => {
-    const cloned = SAMPLE_PDF_APPROVALS.map((s) => ({ ...s }));
+    const cloned = SAMPLE_PDF_APPROVALS.slice(0, 2).map((s) => ({ ...s }));
+    setPdfList(cloned);
+    setActiveTab("combined");
+    if (onScannedDataChange) onScannedDataChange(cloned);
+  };
+
+  const handleLoadThreeSamples = () => {
+    // 1 TMC (sample 1) and 2 ATRs (sample 0 and sample 2)
+    const cloned = [
+      { ...SAMPLE_PDF_APPROVALS[1] }, // TMC
+      { ...SAMPLE_PDF_APPROVALS[0] }, // ATR 1
+      { ...SAMPLE_PDF_APPROVALS[2] }, // ATR 2
+    ];
     setPdfList(cloned);
     setActiveTab("combined");
     if (onScannedDataChange) onScannedDataChange(cloned);
@@ -322,7 +359,7 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-sm font-bold text-zinc-900">ALG / TMC Approval Scanner</h3>
               <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full">
-                PDF Page 1 Scanner (1 or 2 Files)
+                PDF Page 1 Scanner (Up to 3 Files: 1 TMC + 2 ATR)
               </span>
               <span className="text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-full flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block"></span>
@@ -330,7 +367,7 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
               </span>
             </div>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Scans TMC &amp; ATR approval PDFs, attaches KMZ map files, and packages emails with yellow-highlighted urgency for Outlook.
+              Scans up to 3 PDFs (1 TMC + 2 ATRs), attaches KMZ maps, and packages emails with yellow-highlighted urgency for Outlook.
             </p>
           </div>
         </div>
@@ -352,16 +389,32 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
             className="text-[11px] font-semibold bg-zinc-100 hover:bg-indigo-50 hover:text-indigo-700 text-zinc-700 border border-zinc-200 px-2.5 py-1 rounded-md transition cursor-pointer"
             title="Load Boulder CO 26-770109 (ATR/ALG to Nina/Marisa)"
           >
-            ATR (Nina/Marisa)
+            ATR 1 (Boulder)
+          </button>
+          <button
+            type="button"
+            onClick={() => handleLoadSample(2)}
+            className="text-[11px] font-semibold bg-zinc-100 hover:bg-indigo-50 hover:text-indigo-700 text-zinc-700 border border-zinc-200 px-2.5 py-1 rounded-md transition cursor-pointer"
+            title="Load Fort Collins CO 26-770118 (ATR/ALG Speed & Class)"
+          >
+            ATR 2 (Ft Collins)
+          </button>
+          <button
+            type="button"
+            onClick={handleLoadThreeSamples}
+            className="text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1 shadow-2xs"
+            title="Load 3 PDFs: 1 TMC + 2 ATRs for triple approval template"
+          >
+            <Sparkles className="w-3 h-3 text-yellow-300" />
+            <span>Load 3 (1 TMC + 2 ATR)</span>
           </button>
           <button
             type="button"
             onClick={handleLoadBothSamples}
-            className="text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1"
-            title="Load both TMC + ATR PDFs for combined approval template"
+            className="text-[11px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2 py-1 rounded-md transition cursor-pointer flex items-center gap-1"
+            title="Load 2 PDFs: TMC + ATR"
           >
-            <Sparkles className="w-3 h-3 text-indigo-600" />
-            <span>Load Both</span>
+            <span>Load 2</span>
           </button>
         </div>
       </div>
@@ -447,7 +500,7 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
         onChange={(e) => {
           if (e.target.files) handlePdfFiles(e.target.files);
         }}
-        accept=".pdf,application/pdf"
+        accept=".pdf,application/pdf,.kmz,.kml,application/vnd.google-earth.kmz"
         multiple
         className="hidden"
       />
@@ -482,7 +535,11 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
           </div>
           <div>
             <div className="text-xs sm:text-sm font-semibold text-zinc-900 flex items-center gap-2">
-              <span>{pdfList.length > 0 ? `${pdfList.length} of 2 PDF(s) Loaded` : "Drop 1 or 2 Approval PDFs"}</span>
+              <span>
+                {pdfList.length > 0
+                  ? `${pdfList.length} of 3 PDF(s) Loaded${kmzList.length > 0 ? ` + ${kmzList.length} KMZ Map(s)` : ""}`
+                  : "Drop up to 3 files here (PDF, KMZ) or click to browse"}
+              </span>
               {pdfList.length > 0 && (
                 <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
                   <Check className="w-3 h-3" /> Page 1 Extracted
@@ -492,7 +549,7 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
             <p className="text-[11px] sm:text-xs text-zinc-500 mt-0.5">
               {pdfList.length > 0
                 ? pdfList.map((p) => `${p.projectNumber || p.fileName} [${p.studyType}]`).join(" + ")
-                : "Upload TMC and ATR approval PDFs to generate James / Nina / Marisa email formats"}
+                : "PDF and KMZ file supported for added attachment support. Scans 1 TMC + 2 ATR PDFs."}
             </p>
           </div>
         </div>
@@ -517,7 +574,15 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
             className="text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg transition shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
           >
             <UploadCloud className="w-3.5 h-3.5" />
-            <span>{pdfList.length >= 2 ? "Replace PDFs" : pdfList.length === 1 ? "Add 2nd PDF" : "Select PDF(s)"}</span>
+            <span>
+              {pdfList.length >= 3
+                ? "Replace Files"
+                : pdfList.length === 2
+                ? "+ Add 3rd PDF"
+                : pdfList.length === 1
+                ? "+ Add 2nd PDF"
+                : "Select PDF/KMZ File(s)"}
+            </span>
           </button>
         </div>
       </div>
@@ -539,7 +604,11 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
                   }`}
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Combined Approval (TMC + ATR)</span>
+                  <span>
+                    {pdfList.length === 3
+                      ? "✨ Combined Approval (1 TMC + 2 ATR)"
+                      : "✨ Combined Approval (TMC + ATR)"}
+                  </span>
                 </button>
               )}
 
@@ -574,13 +643,14 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
                 );
               })}
 
-              {pdfList.length < 2 && (
+              {pdfList.length < 3 && (
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="text-xs font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 py-1.5 px-2.5 rounded-lg transition cursor-pointer"
+                  className="text-xs font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 py-1.5 px-2.5 rounded-lg transition cursor-pointer flex items-center gap-1"
                 >
-                  + Add 2nd PDF
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add {pdfList.length === 1 ? "2nd" : "3rd"} PDF</span>
                 </button>
               )}
             </div>
@@ -696,64 +766,84 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
             </div>
           )}
 
-          {/* VIEW MODE 1: COMBINED APPROVAL EMAIL (when activeTab === "combined" and 2 PDFs loaded) */}
+          {/* VIEW MODE 1: COMBINED APPROVAL EMAIL (when activeTab === "combined" and 2 or 3 PDFs loaded) */}
           {activeTab === "combined" && combinedEmail && (
             <div className="space-y-4">
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-                {/* Left 5 Cols: Dual PDF Summary & KMZ Attachment Box */}
+                {/* Left 5 Cols: Multi PDF Summary & KMZ Attachment Box */}
                 <div className="lg:col-span-5 space-y-3">
                   {/* Scanned Breakdown */}
                   <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-3.5 sm:p-4 text-xs space-y-3">
                     <div className="font-bold text-zinc-900 flex items-center justify-between border-b border-zinc-200 pb-2">
                       <span className="flex items-center gap-1.5">
                         <Layers className="w-3.5 h-3.5 text-indigo-600" />
-                        Dual PDF Approval Flow
+                        {combinedEmail.isTriple ? "Triple PDF Approval Flow" : "Dual PDF Approval Flow"}
                       </span>
                       <span className="text-[10px] bg-indigo-100 text-indigo-800 font-bold px-1.5 py-0.5 rounded">
-                        2 Files Active
+                        {pdfList.length} Files Active
                       </span>
                     </div>
 
                     {/* TMC Section Details */}
                     {combinedEmail.tmcPdf && (
-                      <div className="bg-white border border-zinc-200 rounded-lg p-2.5 space-y-1.5">
+                      <div className="bg-white border border-indigo-200 rounded-lg p-2.5 space-y-1.5 shadow-2xs">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-bold text-indigo-700 uppercase">Part 1: TMC Approval (Top)</span>
-                          <span className="text-[10px] bg-indigo-50 text-indigo-600 px-1 rounded">TMC</span>
+                          <span className="text-[10px] bg-indigo-50 text-indigo-700 font-bold px-1.5 py-0.2 rounded border border-indigo-200">TMC</span>
                         </div>
                         <div className="text-[11px] text-zinc-700 space-y-0.5">
-                          <p><strong>Project:</strong> {combinedEmail.tmcPdf.projectNumber}</p>
+                          <p><strong>Project:</strong> <span className="font-mono font-bold text-zinc-900">{combinedEmail.tmcPdf.projectNumber}</span></p>
                           <p><strong>Location/s:</strong> {combinedEmail.tmcPdf.locationsCount}</p>
                           <p><strong>Urgency:</strong> {combinedEmail.tmcPdf.urgency}</p>
                         </div>
                       </div>
                     )}
 
-                    {/* ATR Section Details */}
+                    {/* ATR Section Details (Prior ATR PDF) */}
                     {combinedEmail.atrPdf && (
-                      <div className="bg-white border border-zinc-200 rounded-lg p-2.5 space-y-1.5">
+                      <div className="bg-white border border-emerald-200 rounded-lg p-2.5 space-y-1.5 shadow-2xs">
                         <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-emerald-700 uppercase">Part 2: ALG Conversion (Bottom)</span>
-                          <span className="text-[10px] bg-emerald-50 text-emerald-600 px-1 rounded">ATR</span>
+                          <span className="text-[10px] font-bold text-emerald-700 uppercase">
+                            {combinedEmail.isTriple ? "Part 2: Prior ATR PDF (ALG Conversion)" : "Part 2: ALG Conversion (Bottom)"}
+                          </span>
+                          <span className="text-[10px] bg-emerald-50 text-emerald-700 font-bold px-1.5 py-0.2 rounded border border-emerald-200">ATR 1</span>
                         </div>
                         <div className="text-[11px] text-zinc-700 space-y-0.5">
                           <p><strong>Region:</strong> {combinedEmail.atrPdf.region || "South Central"}</p>
-                          <p><strong>Project:</strong> {combinedEmail.atrPdf.projectNumber}</p>
+                          <p><strong>Project:</strong> <span className="font-mono font-bold text-zinc-900">{combinedEmail.atrPdf.projectNumber}</span></p>
                           <p><strong>Location/s:</strong> {combinedEmail.atrPdf.locationsCount}</p>
-                          <p><strong>Study:</strong> {combinedEmail.atrPdf.fullStudyFormatted}</p>
+                          <p><strong>Add-ons:</strong> {combinedEmail.atrPdf.addOns || "Volume"}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Second ATR Section Details (if 3 PDFs) */}
+                    {combinedEmail.atrPdf2 && (
+                      <div className="bg-white border border-teal-200 rounded-lg p-2.5 space-y-1.5 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-teal-700 uppercase">Part 3: Second ATR PDF (ALG Conversion)</span>
+                          <span className="text-[10px] bg-teal-50 text-teal-700 font-bold px-1.5 py-0.2 rounded border border-teal-200">ATR 2</span>
+                        </div>
+                        <div className="text-[11px] text-zinc-700 space-y-0.5">
+                          <p><strong>Project:</strong> <span className="font-mono font-bold text-zinc-900">{combinedEmail.atrPdf2.projectNumber}</span></p>
+                          <p><strong>Location/s:</strong> {combinedEmail.atrPdf2.locationsCount}</p>
+                          <p><strong>Add-ons:</strong> {combinedEmail.atrPdf2.addOns || "Volume"}</p>
                         </div>
                       </div>
                     )}
                   </div>
 
-                  {/* 2. ATTACHMENT PLACEHOLDER FOR KMZ FILE (Below Scanned Details) */}
+                  {/* 2. ATTACHMENT PLACEHOLDER FOR KMZ & PDF FILES (Below Scanned Details) */}
                   <div className="bg-white border-2 border-dashed border-emerald-300 rounded-xl p-3.5 sm:p-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-2">
                         <div className="w-6 h-6 rounded-md bg-emerald-600 text-white flex items-center justify-center">
                           <MapPin className="w-3.5 h-3.5" />
                         </div>
-                        <span className="text-xs font-bold text-zinc-900">KMZ Map Attachment Placeholder</span>
+                        <div>
+                          <span className="text-xs font-bold text-zinc-900 block">Attachment Placeholder</span>
+                          <span className="text-[10px] text-zinc-500">PDF &amp; KMZ files supported</span>
+                        </div>
                       </div>
                       <button
                         type="button"
@@ -770,7 +860,7 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
                       onChange={(e) => {
                         if (e.target.files) handleKmzFiles(e.target.files);
                       }}
-                      accept=".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml"
+                      accept=".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml,.pdf,application/pdf"
                       multiple
                       className="hidden"
                     />
@@ -795,7 +885,7 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
                     >
                       <Paperclip className="w-3.5 h-3.5 text-emerald-600" />
                       <span className="text-xs text-emerald-800 font-medium">
-                        Drop KMZ map file here or click to browse
+                        Drop KMZ map or PDF file here or click to browse
                       </span>
                     </div>
 
@@ -954,19 +1044,41 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
                         </span>
                       </p>
 
-                      <div className="space-y-0.5">
-                        <p><strong>Project Number:</strong> <strong className="font-bold font-mono">{combinedEmail.tmcPdf?.projectNumber}</strong></p>
-                        <p><strong>Location/s:</strong> {combinedEmail.tmcPdf?.locationsCount}</p>
-                      </div>
+                      {combinedEmail.isTriple ? (
+                        /* 3-PDF Email Template */
+                        <>
+                          <div className="space-y-0.5">
+                            <p><strong>Project Number:</strong> <strong className="font-bold font-mono">{combinedEmail.tmcPdf?.projectNumber}</strong></p>
+                            <p><strong>Location/s:</strong> {combinedEmail.tmcPdf?.locationsCount}</p>
+                          </div>
 
-                      <p className="pt-2">Also, Please see ALG conversion attached.</p>
+                          <p className="pt-2">Also, please see ALG conversion attached.</p>
 
-                      <div className="space-y-0.5">
-                        <p><strong>Region:</strong> {combinedEmail.atrPdf?.region || "South Central"}</p>
-                        <p><strong>Project Number:</strong> <strong className="font-bold font-mono">{combinedEmail.atrPdf?.projectNumber}</strong></p>
-                        <p><strong>Location/s:</strong> {combinedEmail.atrPdf?.locationsCount}</p>
-                        <p><strong>Study:</strong> {combinedEmail.atrPdf?.fullStudyFormatted || (combinedEmail.atrPdf?.addOns ? `ALG ${combinedEmail.atrPdf.addOns}` : "ALG Volume")}</p>
-                      </div>
+                          <div className="space-y-0.5">
+                            <p><strong>Region:</strong> {combinedEmail.atrPdf?.region || "South Central"}</p>
+                            <p><strong>Project Number:</strong> <strong className="font-bold font-mono">{combinedEmail.atrPdf?.projectNumber} &amp; {combinedEmail.atrPdf2?.projectNumber}</strong></p>
+                            <p><strong>Location/s:</strong> {combinedEmail.atrPdf?.locationsCount} &amp; {combinedEmail.atrPdf2?.locationsCount}</p>
+                            <p><strong>Study:</strong> ALG {combinedEmail.atrPdf?.addOns || "Volume"} / {combinedEmail.atrPdf2?.addOns || "Volume"}</p>
+                          </div>
+                        </>
+                      ) : (
+                        /* 2-PDF Email Template */
+                        <>
+                          <div className="space-y-0.5">
+                            <p><strong>Project Number:</strong> <strong className="font-bold font-mono">{combinedEmail.tmcPdf?.projectNumber}</strong></p>
+                            <p><strong>Location/s:</strong> {combinedEmail.tmcPdf?.locationsCount}</p>
+                          </div>
+
+                          <p className="pt-2">Also, Please see ALG conversion attached.</p>
+
+                          <div className="space-y-0.5">
+                            <p><strong>Region:</strong> {combinedEmail.atrPdf?.region || "South Central"}</p>
+                            <p><strong>Project Number:</strong> <strong className="font-bold font-mono">{combinedEmail.atrPdf?.projectNumber}</strong></p>
+                            <p><strong>Location/s:</strong> {combinedEmail.atrPdf?.locationsCount}</p>
+                            <p><strong>Study:</strong> {combinedEmail.atrPdf?.fullStudyFormatted || (combinedEmail.atrPdf?.addOns ? `ALG ${combinedEmail.atrPdf.addOns}` : "ALG Volume")}</p>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
