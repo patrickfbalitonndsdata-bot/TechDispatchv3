@@ -1756,37 +1756,13 @@ export function renderNDSTaskGroupHtml(
         <span style="background-color: #FFFF00; color: #000000; font-weight: bold; padding: 0 4px; display: inline-block;">Install:</span> <strong style="color: #000000;">ALG 26-240026 Volume${parishPart}${camPart} ${workWeekStr}</strong>${collectionBadge}
       </div>`;
     }
-  } else if (codKeyword) {
-    // COD Exclusive Format: <Action>: <Project Number> <Study> <Scheduling Team Notes> (<Camera counts>)
-    const studyLabel = extractStudyLabelForCod(o);
-    const studyPart = studyLabel ? ` ${studyLabel}` : "";
-    const camPart = groupUnitCounts ? ` ${groupUnitCounts}` : "";
-
-    if (category === "BatterySwap") {
-      const collectionBadge = ` <span style="background-color: #00FFFF; color: #000000; font-weight: bold; padding: 0 4px; display: inline-block;">${collectionInfo.collectionText}</span>`;
-      mainLine = `
-      <div style="margin: 0 0 8px 0; font-family: Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt; mso-ansi-font-size: 11.0pt; mso-bidi-font-size: 11.0pt; line-height: 1.5; color: #000000; font-weight: bold;">
-        <span style="background-color: #00FFFF; color: #000000; font-weight: bold; font-style: italic; padding: 0 4px; display: inline-block;">SD Card and Battery Swaps:</span> <span style="color: #FF0000; font-weight: bold; font-style: italic;">Upload Data</span> <strong style="color: #000000;">${projectNumber}${studyPart} ${codKeyword}${camPart}</strong>${collectionBadge} <span style="color: #000000; font-weight: normal; font-style: italic;">(Check if cameras are still working, tampered, etc., replace / adjust / swap if necessary.)</span>
-      </div>`;
-    } else if (category === "Teardown") {
-      const teardownNotes = formatNDSTeardownNote(o, daySection, useAnytime ?? branding?.useAnytimeTeardowns);
-      mainLine = `
-      <div style="margin: 0 0 8px 0; font-family: Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt; mso-ansi-font-size: 11.0pt; mso-bidi-font-size: 11.0pt; line-height: 1.5; color: #000000; font-weight: bold;">
-        <span style="background-color: #000000; color: #FFFFFF; font-weight: bold; padding: 0 4px; display: inline-block;">Teardowns:</span> <span style="color: #FF0000; font-weight: bold; font-style: italic;">Upload Data</span> <strong style="color: #000000;">${projectNumber}${studyPart} ${codKeyword}${camPart}</strong>${multiDayCollectionHtml} <span style="background-color: #CCCCCC; color: #000000; font-weight: bold; padding: 0 4px; display: inline-block;">${teardownNotes}</span>
-      </div>`;
-    } else {
-      // Default: Install
-      mainLine = `
-      <div style="margin: 0 0 8px 0; font-family: Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt; mso-ansi-font-size: 11.0pt; mso-bidi-font-size: 11.0pt; line-height: 1.5; color: #000000; font-weight: bold;">
-        <span style="background-color: #FFFF00; color: #000000; font-weight: bold; padding: 0 4px; display: inline-block;">Install:</span> <strong style="color: #000000;">${projectNumber}${studyPart} ${codKeyword}${camPart}</strong>${multiDayCollectionHtml}
-      </div>`;
-    }
   } else {
-    // Standard Format (with global multi-day collection rule for >1 day)
-    const teamNotes = extractSchedulingTeamNotesForGroup(group.orders);
+    // Standard & COD Exclusive Format (with global multi-day collection rule for >1 day)
+    // Preserves prefixes (like ALG for ATR), Add-Ons (w/ Heavy Trucks, Volume, Speed, etc.), and replaces City, State with Scheduling Team Notes (City of Dallas - List ###)
+    const teamNotes = getCodListForGroup(group.orders) || extractSchedulingTeamNotesForGroup(group.orders);
     const { formattedHtml } = formatNDSProjectAndServiceLine(projectNumber, serviceType, rawAddOns);
     const camPart = groupUnitCounts ? ` ${groupUnitCounts}` : "";
-    // If Scheduling Team Notes column is scanned/present, replace <City, State> with <Scheduling Team Notes>
+    // If Scheduling Team Notes / COD keyword is present, replace <City, State> with <Scheduling Team Notes>
     const locationOrNotesPart = teamNotes
       ? (formattedHtml ? ` ${teamNotes}` : teamNotes)
       : cityState
@@ -1924,21 +1900,8 @@ export function renderNDSTaskGroupText(
     } else {
       mainLine = `Install: ALG 26-240026 Volume${parishPart}${camPart} ${workWeekStr}${collectionText}`;
     }
-  } else if (codKeyword) {
-    const studyLabel = extractStudyLabelForCod(o);
-    const studyPart = studyLabel ? ` ${studyLabel}` : "";
-    const camPart = groupUnitCounts ? ` ${groupUnitCounts}` : "";
-
-    if (category === "BatterySwap") {
-      mainLine = `SD Card and Battery Swaps: Upload Data ${projectNumber}${studyPart} ${codKeyword}${camPart} ${collectionInfo.collectionText} (Check if cameras are still working, tampered, etc., replace / adjust / swap if necessary.)`;
-    } else if (category === "Teardown") {
-      const teardownNotes = formatNDSTeardownNote(o, daySection, useAnytime ?? branding?.useAnytimeTeardowns);
-      mainLine = `Teardowns: Upload Data ${projectNumber}${studyPart} ${codKeyword}${camPart}${multiDayCollectionText} ${teardownNotes}`;
-    } else {
-      mainLine = `Install: ${projectNumber}${studyPart} ${codKeyword}${camPart}${multiDayCollectionText}`;
-    }
   } else {
-    const teamNotes = extractSchedulingTeamNotesForGroup(group.orders);
+    const teamNotes = getCodListForGroup(group.orders) || extractSchedulingTeamNotesForGroup(group.orders);
     const { formattedText } = formatNDSProjectAndServiceLine(projectNumber, serviceType, rawAddOns);
     const camPart = groupUnitCounts ? ` ${groupUnitCounts}` : "";
     const locationOrNotesPart = teamNotes
