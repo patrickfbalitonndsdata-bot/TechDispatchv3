@@ -1,5 +1,5 @@
 import Papa from "papaparse";
-import { WorkOrder, ColumnMapping, ParseResult, PriorityLevel } from "../types";
+import { WorkOrder, ColumnMapping, ParseResult, PriorityLevel, DetectedWorkWeek } from "../types";
 
 // Standard Field Synonyms for automatic fuzzy header matching
 const FIELD_SYNONYMS: Record<keyof ColumnMapping, string[]> = {
@@ -868,13 +868,140 @@ export function parseCsvData(csvText: string, customMapping?: Partial<ColumnMapp
     }
   });
 
+  const { detectedWorkWeeks, incomingWorkWeek } = detectScannedWorkWeeks(orders);
+
   return {
     orders,
     headers,
     mapping,
     detectedDates: Array.from(detectedDates).sort(),
+    detectedWorkWeeks,
+    incomingWorkWeek,
     technicians: Array.from(technicianSet).sort(),
     warnings,
     rawRows: parsed.data,
+  };
+}
+
+/**
+ * Detects distinct calendar work weeks and identifies the Incoming Work Week
+ * when multiple work weeks are scanned in the dataset.
+ */
+export function detectScannedWorkWeeks(orders: WorkOrder[]): {
+  detectedWorkWeeks: DetectedWorkWeek[];
+  incomingWorkWeek?: DetectedWorkWeek;
+} {
+  if (!orders || orders.length === 0) {
+    return { detectedWorkWeeks: [] };
+  }
+
+  const weekMap = new Map<
+    string,
+    {
+      sundayDateStr: string;
+      saturdayDateStr: string;
+      formattedRange: string;
+      weekNumbers: Set<number>;
+      installCount: number;
+      totalTaskCount: number;
+    }
+  >();
+
+  orders.forEach((ord) => {
+    const rawDate = ord.date || (ord.setupBefore ? parseDateTimeString(ord.setupBefore)?.date : undefined);
+    if (!rawDate) return;
+
+    let baseDate: Date | null = null;
+    const parts = rawDate.split("-");
+    if (parts.length === 3) {
+      baseDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    } else {
+      const parsed = new Date(rawDate);
+      if (!isNaN(parsed.getTime())) baseDate = parsed;
+    }
+    if (!baseDate || isNaN(baseDate.getTime())) return;
+
+    const dayOfWeek = baseDate.getDay();
+    const sunday = new Date(baseDate);
+    sunday.setDate(baseDate.getDate() - dayOfWeek);
+
+    const saturday = new Date(sunday);
+    saturday.setDate(sunday.getDate() + 6);
+
+    const formatMMDD = (d: Date) => {
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      const yyyy = d.getFullYear();
+      return `${mm}/${dd}/${yyyy}`;
+    };
+
+    const sundayFormatted = formatMMDD(sunday);
+    const saturdayFormatted = formatMMDD(saturday);
+    const sundayStr = `${sunday.getFullYear()}-${String(sunday.getMonth() + 1).padStart(2, "0")}-${String(sunday.getDate()).padStart(2, "0")}`;
+    const saturdayStr = `${saturday.getFullYear()}-${String(saturday.getMonth() + 1).padStart(2, "0")}-${String(saturday.getDate()).padStart(2, "0")}`;
+
+    if (!weekMap.has(sundayStr)) {
+      weekMap.set(sundayStr, {
+        sundayDateStr: sundayStr,
+        saturdayDateStr: saturdayStr,
+        formattedRange: `${sundayFormatted} - ${saturdayFormatted}`,
+        weekNumbers: new Set<number>(),
+        installCount: 0,
+        totalTaskCount: 0,
+      });
+    }
+
+    const item = weekMap.get(sundayStr)!;
+    item.totalTaskCount += 1;
+    if (ord.taskCategory === "Install" || !ord.taskCategory) {
+      item.installCount += 1;
+    }
+
+    if (ord.workWeek) {
+      const numMatch = ord.workWeek.match(/\d+/);
+      if (numMatch) {
+        item.weekNumbers.add(parseInt(numMatch[0], 10));
+      }
+    }
+  });
+
+  const sortedSundayKeys = Array.from(weekMap.keys()).sort();
+  if (sortedSundayKeys.length === 0) {
+    return { detectedWorkWeeks: [] };
+  }
+
+  const detectedWorkWeeks: DetectedWorkWeek[] = sortedSundayKeys.map((key, index) => {
+    const item = weekMap.get(key)!;
+    const weekNumArray = Array.from(item.weekNumbers).sort((a, b) => a - b);
+    const mainWeekNum = weekNumArray.length > 0 ? weekNumArray[0] : undefined;
+    const label = mainWeekNum
+      ? `Work Week ${mainWeekNum} (${item.formattedRange})`
+      : `Work Week ${item.formattedRange}`;
+
+    const isMultiple = sortedSundayKeys.length > 1;
+    const isIncoming = isMultiple ? index === sortedSundayKeys.length - 1 : false;
+    const isCurrentOrPrevious = isMultiple ? index < sortedSundayKeys.length - 1 : false;
+
+    return {
+      workWeekLabel: label,
+      sundayDateStr: item.sundayDateStr,
+      saturdayDateStr: item.saturdayDateStr,
+      formattedRange: item.formattedRange,
+      weekNumber: mainWeekNum,
+      isIncoming,
+      isCurrentOrPrevious,
+      installCount: item.installCount,
+      totalTaskCount: item.totalTaskCount,
+    };
+  });
+
+  // If multiple weeks are scanned, identify incoming (latest) week; if single week, that week is incoming
+  const incomingWorkWeek =
+    detectedWorkWeeks.find((w) => w.isIncoming) ||
+    detectedWorkWeeks[detectedWorkWeeks.length - 1];
+
+  return {
+    detectedWorkWeeks,
+    incomingWorkWeek,
   };
 }
