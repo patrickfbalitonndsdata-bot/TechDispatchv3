@@ -4,6 +4,8 @@ import {
   Users,
   History,
   Sparkles,
+  Calendar,
+  FileText,
 } from "lucide-react";
 import {
   WorkOrder,
@@ -27,7 +29,6 @@ import { SettingsBrandingModal } from "./components/SettingsBrandingModal";
 import { DispatchHistoryModal } from "./components/DispatchHistoryModal";
 import { SavedEmailsHistoryTab } from "./components/SavedEmailsHistoryTab";
 import { AlgTmcApprovalPanel } from "./components/AlgTmcApprovalPanel";
-import { FileText } from "lucide-react";
 
 export default function App() {
   // 1. Data & Parsing State
@@ -82,7 +83,9 @@ export default function App() {
     const parsed = parseCsvData(sample.csvContent, customMapping || undefined);
     setParseResult(parsed);
 
-    if (parsed.detectedDates.length > 0) {
+    if (parsed.incomingWorkWeek) {
+      setSelectedDate(parsed.incomingWorkWeek.sundayDateStr);
+    } else if (parsed.detectedDates.length > 0) {
       setSelectedDate(parsed.detectedDates[0]);
     }
     if (parsed.technicians.length > 0) {
@@ -96,7 +99,9 @@ export default function App() {
     const parsed = parseCsvData(text, customMapping || undefined);
     setParseResult(parsed);
 
-    if (parsed.detectedDates.length > 0) {
+    if (parsed.incomingWorkWeek) {
+      setSelectedDate(parsed.incomingWorkWeek.sundayDateStr);
+    } else if (parsed.detectedDates.length > 0) {
       setSelectedDate(parsed.detectedDates[0]);
     }
     if (parsed.technicians.length > 0) {
@@ -109,7 +114,9 @@ export default function App() {
     if (currentCsvText) {
       const parsed = parseCsvData(currentCsvText, newMapping);
       setParseResult(parsed);
-      if (parsed.detectedDates.length > 0 && !parsed.detectedDates.includes(selectedDate)) {
+      if (parsed.incomingWorkWeek) {
+        setSelectedDate(parsed.incomingWorkWeek.sundayDateStr);
+      } else if (parsed.detectedDates.length > 0 && !parsed.detectedDates.includes(selectedDate)) {
         setSelectedDate(parsed.detectedDates[0]);
       }
       if (parsed.technicians.length > 0 && !parsed.technicians.includes(selectedTechName)) {
@@ -407,24 +414,49 @@ export default function App() {
             </button>
           </div>
 
-          {/* Quick Technician Switcher (when on Generator tab) */}
-          {activeTab === "generator" && rosters.length > 0 && (
-            <div className="hidden sm:flex items-center space-x-2 text-xs pb-1.5">
-              <span className="text-zinc-500 font-medium flex items-center gap-1">
-                <Users className="w-3.5 h-3.5 text-zinc-400" />
-                <span>Technician:</span>
-              </span>
-              <select
-                value={selectedTechName}
-                onChange={(e) => setSelectedTechName(e.target.value)}
-                className="bg-white border border-zinc-300 rounded-lg px-2.5 py-1 text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 shadow-2xs cursor-pointer"
-              >
-                {rosters.map((r) => (
-                  <option key={r.technicianName} value={r.technicianName}>
-                    {r.technicianName} ({r.orders.length} stops)
-                  </option>
-                ))}
-              </select>
+          {/* Quick Selectors (Technician & Work Week when multiple scanned) */}
+          {activeTab === "generator" && (
+            <div className="hidden sm:flex items-center space-x-3 text-xs pb-1.5">
+              {parseResult?.detectedWorkWeeks && parseResult.detectedWorkWeeks.length > 1 && (
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-zinc-500 font-medium flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>Work Week:</span>
+                  </span>
+                  <select
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="bg-indigo-50/80 border border-indigo-200 text-indigo-950 font-bold rounded-lg px-2 py-1 text-xs focus:outline-hidden focus:ring-2 focus:ring-indigo-600 shadow-2xs cursor-pointer"
+                  >
+                    {parseResult.detectedWorkWeeks.map((ww) => (
+                      <option key={ww.sundayDateStr} value={ww.sundayDateStr}>
+                        {ww.isIncoming ? "👉 [Incoming] " : "[Past/Current] "}
+                        {ww.workWeekLabel}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {rosters.length > 0 && (
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-zinc-500 font-medium flex items-center gap-1">
+                    <Users className="w-3.5 h-3.5 text-zinc-400" />
+                    <span>Technician:</span>
+                  </span>
+                  <select
+                    value={selectedTechName}
+                    onChange={(e) => setSelectedTechName(e.target.value)}
+                    className="bg-white border border-zinc-300 rounded-lg px-2.5 py-1 text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 shadow-2xs cursor-pointer"
+                  >
+                    {rosters.map((r) => (
+                      <option key={r.technicianName} value={r.technicianName}>
+                        {r.technicianName} ({r.orders.length} stops)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -432,21 +464,45 @@ export default function App() {
         {/* Tab Content Display */}
         {activeTab === "generator" ? (
           <>
-            {/* Mobile Technician Switcher */}
-            {rosters.length > 0 && (
-              <div className="flex sm:hidden items-center justify-between bg-white border border-zinc-200 rounded-lg p-2.5 text-xs">
-                <span className="font-semibold text-zinc-700">Active Technician:</span>
-                <select
-                  value={selectedTechName}
-                  onChange={(e) => setSelectedTechName(e.target.value)}
-                  className="bg-zinc-50 border border-zinc-300 rounded-lg px-2.5 py-1 text-xs font-bold text-zinc-900"
-                >
-                  {rosters.map((r) => (
-                    <option key={r.technicianName} value={r.technicianName}>
-                      {r.technicianName} ({r.orders.length} stops)
-                    </option>
-                  ))}
-                </select>
+            {/* Mobile Selectors */}
+            {((parseResult?.detectedWorkWeeks && parseResult.detectedWorkWeeks.length > 1) || rosters.length > 0) && (
+              <div className="flex sm:hidden flex-col gap-2 bg-white border border-zinc-200 rounded-lg p-2.5 text-xs">
+                {parseResult?.detectedWorkWeeks && parseResult.detectedWorkWeeks.length > 1 && (
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-indigo-700 flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span>Work Week:</span>
+                    </span>
+                    <select
+                      value={selectedDate}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      className="bg-indigo-50 border border-indigo-300 rounded-lg px-2 py-1 text-xs font-bold text-indigo-950"
+                    >
+                      {parseResult.detectedWorkWeeks.map((ww) => (
+                        <option key={ww.sundayDateStr} value={ww.sundayDateStr}>
+                          {ww.isIncoming ? "👉 Incoming: " : ""}
+                          {ww.workWeekLabel}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {rosters.length > 0 && (
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-zinc-700">Active Technician:</span>
+                    <select
+                      value={selectedTechName}
+                      onChange={(e) => setSelectedTechName(e.target.value)}
+                      className="bg-zinc-50 border border-zinc-300 rounded-lg px-2.5 py-1 text-xs font-bold text-zinc-900"
+                    >
+                      {rosters.map((r) => (
+                        <option key={r.technicianName} value={r.technicianName}>
+                          {r.technicianName} ({r.orders.length} stops)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
             )}
 
