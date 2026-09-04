@@ -70,6 +70,7 @@ import {
   LADOTD_MON_NOTE,
   LADOTD_START_TUE_NOTE,
   LADOTD_TUE_NOTE,
+  MACHINE_LOCS_TO_CAM_NOTE,
   PEDS_SIGHT_DISTANCE_NOTE,
 } from "../utils/outlookTemplateGenerator";
 import {
@@ -135,6 +136,12 @@ const DEFAULT_NOTE_PRESETS: NotePreset[] = [
     id: "preset-ladotd-tue",
     title: "LADOTD notes (Tuesday)",
     text: LADOTD_TUE_NOTE,
+    isBuiltIn: true,
+  },
+  {
+    id: "preset-machine-locs-to-cam",
+    title: "Machine Locs to Cam",
+    text: MACHINE_LOCS_TO_CAM_NOTE,
     isBuiltIn: true,
   },
   {
