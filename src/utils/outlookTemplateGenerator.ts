@@ -2401,6 +2401,17 @@ export function groupOrdersByDayOfWeek(
           }
         }
 
+        // Check 3: Date range inside workWeek label (e.g. "Work week 08/30/2026 - 09/05/2026")
+        if (!isFromPreviousWeek && order.workWeek) {
+          const dateMatch = order.workWeek.match(/(\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2})/);
+          if (dateMatch) {
+            const pDate = new Date(dateMatch[1]);
+            if (!isNaN(pDate.getTime()) && pDate.getTime() < baseSundayMs) {
+              isFromPreviousWeek = true;
+            }
+          }
+        }
+
         // Check if date falls in current calendar week range (0..6 or 7)
         if (diffDays >= 0 && (diffDays <= 6 || (diffDays === 7 && sundaySundayEnabled))) {
           // If task is from a previous week and overlapping toggle is OFF, exclude it
@@ -2479,6 +2490,9 @@ export const LADOTD_START_TUE_NOTE =
 
 export const LADOTD_TUE_NOTE =
   `Note:\nContinue installing locations not finished yesterday until all inventories have been used up.`;
+
+export const MACHINE_LOCS_TO_CAM_NOTE =
+  "Note: Please use cameras for machine locations if you are unable to install the machines due to road conditions. We are unable to determine in advance whether the current road conditions will allow for machine installation. Camera placement has therefore been provided as an alternative option for your installs when machine installation is not feasible.";
 
 export const PEDS_SIGHT_DISTANCE_NOTE =
   "Note: For PEDS locations, please make sure to conduct the sight distance requirement and complete the attached PDF/form link for this SPEED project. Please coordinate with Douglas if you have any questions.";
