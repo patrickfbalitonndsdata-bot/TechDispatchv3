@@ -211,11 +211,25 @@ export interface DispatchLogRecord {
   notes?: string;
 }
 
+export interface DetectedWorkWeek {
+  workWeekLabel: string;
+  sundayDateStr: string;
+  saturdayDateStr: string;
+  formattedRange: string;
+  weekNumber?: number;
+  isIncoming?: boolean;
+  isCurrentOrPrevious?: boolean;
+  installCount: number;
+  totalTaskCount: number;
+}
+
 export interface ParseResult {
   orders: WorkOrder[];
   headers: string[];
   mapping: ColumnMapping;
   detectedDates: string[];
+  detectedWorkWeeks?: DetectedWorkWeek[];
+  incomingWorkWeek?: DetectedWorkWeek;
   technicians: string[];
   warnings: string[];
   rawRows: Record<string, string>[];
