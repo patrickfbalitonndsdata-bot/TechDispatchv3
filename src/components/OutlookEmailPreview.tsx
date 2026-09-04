@@ -68,6 +68,7 @@ import {
   SPEED_TEARDOWN_NOTE,
   TMC_INSTALL_NOTE,
   LADOTD_MON_NOTE,
+  LADOTD_START_TUE_NOTE,
   LADOTD_TUE_NOTE,
   PEDS_SIGHT_DISTANCE_NOTE,
 } from "../utils/outlookTemplateGenerator";
@@ -122,6 +123,12 @@ const DEFAULT_NOTE_PRESETS: NotePreset[] = [
     id: "preset-ladotd-mon",
     title: "LADOTD Notes (Monday)",
     text: LADOTD_MON_NOTE,
+    isBuiltIn: true,
+  },
+  {
+    id: "preset-ladotd-start-tue",
+    title: "LADOTD Start Tuesday",
+    text: LADOTD_START_TUE_NOTE,
     isBuiltIn: true,
   },
   {
