@@ -55,7 +55,7 @@ export const HARDCODED_TECHNICIAN_ROSTER: TechnicianDirectoryEntry[] = [
   {
     name: "Eduardo Lara",
     aliases: ["Eduardo Lara", "Lara, Eduardo", "Eduardo, Lara", "Lara Eduardo", "Eduardo"],
-    airtableLink: "https://airtable.com/appvNeYuPd12aTmxS/shr1KfYiatpFz2pe",
+    airtableLink: "https://airtable.com/appvNeYuPd12aTmxS/shr1KfYiatpFz2pep/tblr3T3GCLPM1hYo5",
   },
   {
     name: "Carlos Coreas",
