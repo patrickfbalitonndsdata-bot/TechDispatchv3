@@ -169,6 +169,43 @@ export function isMachineOrder(order: WorkOrder): boolean {
   return false;
 }
 
+export interface JoinedLadotdNoteInfo {
+  joinedSuffix: string;
+  locNumbers: string[];
+  unitText: string;
+  extraNotes: string;
+  originalNote: string;
+}
+
+/**
+ * Parses LADOTD Schedule Notes that specify joined locations with a single equipment count.
+ * E.g. "4764, 4765, 4766, 4769 1 camera", "(4555, 4556, 4557 1 camera)", "4555, 4556, 4557 - 2 cameras"
+ */
+export function parseJoinedLadotdNote(notes?: string): JoinedLadotdNoteInfo | null {
+  if (!notes) return null;
+  const clean = notes.trim();
+
+  const regex = /(?:^|\(|\b)((?:\d{3,5}\s*(?:,|\/|and|&|\s)\s*)+\d{3,5})\s*[-:,]?\s*\(?(\d+\s*(?:cameras?|machines?|units?|cams?))\)?/i;
+  const match = clean.match(regex);
+  if (match) {
+    const rawLocs = match[1];
+    let unitPart = match[2].trim();
+    unitPart = unitPart.replace(/\bcams\b/i, "cameras").replace(/\bcam\b/i, "camera");
+    const locNumbers = rawLocs.split(/[\s,\/&]+|and/i).filter(Boolean);
+    if (locNumbers.length > 1 && locNumbers.every((n) => /^\d{3,5}$/.test(n))) {
+      const afterMatch = clean.replace(match[0], "").replace(/^[,\s()\-:]+/, "").replace(/[,\s()]+$/, "").trim();
+      return {
+        joinedSuffix: locNumbers.join(", "),
+        locNumbers,
+        unitText: unitPart,
+        extraNotes: afterMatch ? `(${afterMatch})` : "",
+        originalNote: clean,
+      };
+    }
+  }
+  return null;
+}
+
 /**
  * Formats parent / headline counts for Installs, Teardowns, Battery Swaps lines.
  * Examples:
@@ -179,11 +216,38 @@ export function isMachineOrder(order: WorkOrder): boolean {
  * - "(1 machine)"
  * Note: Orders with Method = "Manual" are disregarded and not counted.
  */
-export function formatNDSGroupUnitCounts(orders: WorkOrder[]): string {
+export function formatNDSGroupUnitCounts(orders: WorkOrder[], isLadotdActive?: boolean): string {
   let totalCameras = 0;
   let totalMachines = 0;
+  const coveredSuffixes = new Set<string>();
+
+  if (isLadotdActive) {
+    for (const ord of orders) {
+      const noteSrc = ord.scheduleNotes || (ord.rawRowData && ord.rawRowData["Schedule Notes"]) || ord.specialInstructions || ord.description || "";
+      const parsed = parseJoinedLadotdNote(noteSrc);
+      if (parsed) {
+        if (parsed.locNumbers.some((n) => coveredSuffixes.has(n))) continue;
+        parsed.locNumbers.forEach((n) => coveredSuffixes.add(n));
+
+        const countMatch = parsed.unitText.match(/\d+/);
+        const count = countMatch ? parseInt(countMatch[0], 10) : 1;
+        if (/machine/i.test(parsed.unitText)) {
+          totalMachines += count;
+        } else {
+          totalCameras += count;
+        }
+      }
+    }
+  }
 
   orders.forEach((ord) => {
+    const s = ord.locationId
+      ? extractLocationSuffix(ord.locationId)
+      : extractLocationSuffix(ord.orderNumber);
+    if (s && coveredSuffixes.has(s)) {
+      return;
+    }
+
     // Disregard manual method orders completely from equipment counts
     if (isManualOrder(ord)) {
       return;
@@ -1698,6 +1762,87 @@ export function renderCodSightDistanceText(
 }
 
 /**
+ * Formats all bullet items for a project task group, handling joined LADOTD notes when LADOTD Exclusive is active.
+ */
+export function formatGroupBullets(
+  group: GroupedProjectTask,
+  isLadotdActive: boolean
+): FormattedBulletItem[] {
+  const processedSuffixes = new Set<string>();
+  const bullets: FormattedBulletItem[] = [];
+
+  // Map each location number (e.g. "4555", "4556", "4557") to its parsed joined info if present
+  const joinedInfoByLoc = new Map<string, JoinedLadotdNoteInfo>();
+  if (isLadotdActive) {
+    for (const ord of group.orders) {
+      const noteSrc =
+        ord.scheduleNotes ||
+        (ord.rawRowData && ord.rawRowData["Schedule Notes"]) ||
+        ord.specialInstructions ||
+        ord.description ||
+        "";
+      const parsed = parseJoinedLadotdNote(noteSrc);
+      if (parsed) {
+        for (const num of parsed.locNumbers) {
+          const rawNum = num.trim();
+          const cleanNum = rawNum.replace(/^0+/, "");
+          if (rawNum && !joinedInfoByLoc.has(rawNum)) {
+            joinedInfoByLoc.set(rawNum, parsed);
+          }
+          if (cleanNum && !joinedInfoByLoc.has(cleanNum)) {
+            joinedInfoByLoc.set(cleanNum, parsed);
+          }
+        }
+      }
+    }
+  }
+
+  for (const ord of group.orders) {
+    const s = ord.locationId
+      ? extractLocationSuffix(ord.locationId)
+      : extractLocationSuffix(ord.orderNumber);
+    const cleanS = s ? s.replace(/^0+/, "") : "";
+
+    // Skip if this location was already covered by a prior bullet or joined group
+    if ((s && processedSuffixes.has(s)) || (cleanS && processedSuffixes.has(cleanS))) {
+      continue;
+    }
+
+    const joinedParsed = isLadotdActive && (s ? joinedInfoByLoc.get(s) : null) || (cleanS ? joinedInfoByLoc.get(cleanS) : null);
+
+    if (isLadotdActive && joinedParsed) {
+      // Mark all locations belonging to this joined note as processed so subsequent rows are skipped
+      for (const num of joinedParsed.locNumbers) {
+        processedSuffixes.add(num);
+        processedSuffixes.add(num.replace(/^0+/, ""));
+      }
+      if (s) processedSuffixes.add(s);
+      if (cleanS) processedSuffixes.add(cleanS);
+
+      const isMach = /machine/i.test(joinedParsed.unitText);
+      bullets.push({
+        suffix: joinedParsed.joinedSuffix,
+        unitText: joinedParsed.unitText,
+        isMachine: isMach,
+        isManual: false,
+        notesText: joinedParsed.extraNotes,
+        isRedo: Boolean(ord.isRedo),
+        fullText: `${joinedParsed.joinedSuffix} ${joinedParsed.unitText}${joinedParsed.extraNotes ? " " + joinedParsed.extraNotes : ""}${ord.isRedo ? " REDO" : ""}`,
+      });
+    } else {
+      if (s) processedSuffixes.add(s);
+      if (cleanS) processedSuffixes.add(cleanS);
+      const bullet = formatBulletItem(ord);
+      if (bullet.suffix) {
+        bullets.push(bullet);
+      }
+    }
+  }
+
+  return bullets;
+}
+
+/**
  * Render exact NDS task lines for Installs, Teardowns, and SD Card & Battery Swaps
  * Includes support for nested sub-location bullets (• 001 1 camera, • 5666 1 camera...)
  * Supports LADOTD Exclusive formatting, COD Exclusive formatting, and global multi-day collection suffixes.
@@ -1714,11 +1859,11 @@ export function renderNDSTaskGroupHtml(
   const serviceType = o.jobType || "Miovision";
   const rawAddOns = o.serviceTypeAddOns || "";
   const cityState = o.cityState || o.serviceAddress || "";
-  const groupUnitCounts = formatNDSGroupUnitCounts(group.orders);
   const category = group.category;
 
   const isLadotdProject = projectNumber === "26-240026" || projectNumber.includes("26-240026");
   const isLadotdActive = Boolean((branding?.ladotdExclusive ?? ladotdExclusive) && isLadotdProject);
+  const groupUnitCounts = formatNDSGroupUnitCounts(group.orders, isLadotdActive);
 
   const isCodExclusiveActive = Boolean(branding?.codExclusive);
   const codKeyword = isCodExclusiveActive ? getCodListForGroup(group.orders) : null;
@@ -1802,12 +1947,7 @@ export function renderNDSTaskGroupHtml(
 
   // Render location bullet points for all locations with a location suffix (e.g. 001, 5666)
   // Formatted with Outlook native bullet semantics (mso-special-format: bullet) and tight line height
-  const validBullets = group.orders
-    .map((ord) => {
-      const bullet = formatBulletItem(ord);
-      return { ...bullet, ord };
-    })
-    .filter((b) => !!b.suffix);
+  const validBullets = formatGroupBullets(group, isLadotdActive);
 
   // Check for COD Sight Distance requirement locations under Teardowns
   let sightDistanceHtml = "";
@@ -1869,11 +2009,11 @@ export function renderNDSTaskGroupText(
   const serviceType = o.jobType || "Miovision";
   const rawAddOns = o.serviceTypeAddOns || "";
   const cityState = o.cityState || o.serviceAddress || "";
-  const groupUnitCounts = formatNDSGroupUnitCounts(group.orders);
   const category = group.category;
 
   const isLadotdProject = projectNumber === "26-240026" || projectNumber.includes("26-240026");
   const isLadotdActive = Boolean((branding?.ladotdExclusive ?? ladotdExclusive) && isLadotdProject);
+  const groupUnitCounts = formatNDSGroupUnitCounts(group.orders, isLadotdActive);
 
   const isCodExclusiveActive = Boolean(branding?.codExclusive);
   const codKeyword = isCodExclusiveActive ? getCodListForGroup(group.orders) : null;
@@ -1940,9 +2080,7 @@ export function renderNDSTaskGroupText(
     }
   }
 
-  const validBullets = group.orders
-    .map((ord) => formatBulletItem(ord))
-    .filter((b) => !!b.suffix);
+  const validBullets = formatGroupBullets(group, isLadotdActive);
 
   if (validBullets.length > 0) {
     const bulletLines = validBullets.map((b) => {
@@ -2334,7 +2472,10 @@ export const TMC_INSTALL_NOTE =
   "Note: If the proposed camera placement will not work due to actual site conditions, please use your best judgment where to install the equipment and obtain approval from the region before leaving the site. Also, please ensure that everything within the polygon, including driveways, pedestrian crossing and all possible movements are captured.\nFor backup cameras, it is best to place diagonally where the main camera is.";
 
 export const LADOTD_MON_NOTE =
-  `Note:\nFor locations with no street view, please look for a viable ALG cam installation point and have it approved by the region first before leaving the site. Please make sure that cameras are facing the taillights of the vehicles.\n\nFor not collectable locations (no installation points, closed roads, private property, etc), please first consult with Tyler Shaw /Douglas Thomas about locations but also send photos of the locations to the region for confirmation in Google Chat. Once completed, you may skip installing at location.\n\nContinue installing locations not finished today on Tuesday until all inventories have been used up.\n\nIf you are unable to fully allocate your inventory, please follow the escalation protocol provided by your Field Manager or Doug/Tyler. Thank you!`;
+  `Note:\nFor locations with no street view, please look for a viable ALG cam installation point and have it approved by the region first before leaving the site. Please make sure that cameras are facing the taillights of the vehicles.\n\nFor not collectable locations (no installation points, closed roads, private property, etc), please first consult with Douglas Thomas about locations but also send photos of the locations to the region for confirmation in Google Chat. Once completed, you may skip installing at location.\n\nContinue installing locations not finished today on Tuesday until all inventories have been used up.\n\nIf you are unable to fully allocate your inventory, please follow the escalation protocol provided by your Field Manager or Doug. Thank you!`;
+
+export const LADOTD_START_TUE_NOTE =
+  `Note:\nFor locations with no street view, please look for a viable ALG cam installation point and have it approved by the region first before leaving the site. Please make sure that cameras are facing the taillights of the vehicles.\n\nFor not collectable locations (no installation points, closed roads, private property, etc), please first consult with Douglas Thomas about locations but also send photos of the locations to the region for confirmation in Google Chat. Once completed, you may skip installing at location.\n\nIf you are unable to fully allocate your inventory, please follow the escalation protocol provided by your Field Manager or Doug. Thank you!`;
 
 export const LADOTD_TUE_NOTE =
   `Note:\nContinue installing locations not finished yesterday until all inventories have been used up.`;
