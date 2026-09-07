@@ -244,7 +244,7 @@ export function formatNDSGroupUnitCounts(orders: WorkOrder[], isLadotdActive?: b
     const s = ord.locationId
       ? extractLocationSuffix(ord.locationId)
       : extractLocationSuffix(ord.orderNumber);
-    if (s && coveredSuffixes.has(s)) {
+    if (isLadotdActive && s && coveredSuffixes.has(s)) {
       return;
     }
 
@@ -1768,7 +1768,7 @@ export function formatGroupBullets(
   group: GroupedProjectTask,
   isLadotdActive: boolean
 ): FormattedBulletItem[] {
-  const processedSuffixes = new Set<string>();
+  const coveredJoinedSuffixes = new Set<string>();
   const bullets: FormattedBulletItem[] = [];
 
   // Map each location number (e.g. "4555", "4556", "4557") to its parsed joined info if present
@@ -1803,21 +1803,21 @@ export function formatGroupBullets(
       : extractLocationSuffix(ord.orderNumber);
     const cleanS = s ? s.replace(/^0+/, "") : "";
 
-    // Skip if this location was already covered by a prior bullet or joined group
-    if ((s && processedSuffixes.has(s)) || (cleanS && processedSuffixes.has(cleanS))) {
+    // Skip only if this location was already covered by a prior joined LADOTD group bullet
+    if (isLadotdActive && ((s && coveredJoinedSuffixes.has(s)) || (cleanS && coveredJoinedSuffixes.has(cleanS)))) {
       continue;
     }
 
-    const joinedParsed = isLadotdActive && (s ? joinedInfoByLoc.get(s) : null) || (cleanS ? joinedInfoByLoc.get(cleanS) : null);
+    const joinedParsed = isLadotdActive && ((s ? joinedInfoByLoc.get(s) : null) || (cleanS ? joinedInfoByLoc.get(cleanS) : null));
 
     if (isLadotdActive && joinedParsed) {
-      // Mark all locations belonging to this joined note as processed so subsequent rows are skipped
+      // Mark all locations belonging to this joined note as covered so subsequent rows in this joined group are skipped
       for (const num of joinedParsed.locNumbers) {
-        processedSuffixes.add(num);
-        processedSuffixes.add(num.replace(/^0+/, ""));
+        coveredJoinedSuffixes.add(num);
+        coveredJoinedSuffixes.add(num.replace(/^0+/, ""));
       }
-      if (s) processedSuffixes.add(s);
-      if (cleanS) processedSuffixes.add(cleanS);
+      if (s) coveredJoinedSuffixes.add(s);
+      if (cleanS) coveredJoinedSuffixes.add(cleanS);
 
       const isMach = /machine/i.test(joinedParsed.unitText);
       bullets.push({
@@ -1830,8 +1830,7 @@ export function formatGroupBullets(
         fullText: `${joinedParsed.joinedSuffix} ${joinedParsed.unitText}${joinedParsed.extraNotes ? " " + joinedParsed.extraNotes : ""}${ord.isRedo ? " REDO" : ""}`,
       });
     } else {
-      if (s) processedSuffixes.add(s);
-      if (cleanS) processedSuffixes.add(cleanS);
+      // Include every listed location entry in order, regardless of redundant or duplicate location suffixes
       const bullet = formatBulletItem(ord);
       if (bullet.suffix) {
         bullets.push(bullet);
