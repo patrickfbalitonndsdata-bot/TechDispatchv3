@@ -1,5 +1,5 @@
 import { cleanTechnicianName } from "./outlookTemplateGenerator";
-import { PedsConductLineItem } from "../types";
+import { PedsConductLineItem, EmailAttachment } from "../types";
 
 export interface GeneratedEmailRecord {
   id: string;
@@ -20,6 +20,7 @@ export interface GeneratedEmailRecord {
   googleMapsUrl?: string;
   airtableUrl?: string;
   photoUploadUrl?: string;
+  attachments?: EmailAttachment[];
   brandingConfig?: {
     additionalNotesEnabled?: boolean;
     emailUpdatesEnabled?: boolean;
@@ -40,6 +41,7 @@ export interface GeneratedEmailRecord {
     customTechAirtableLinks?: Record<string, string>;
     photoUploadUrl?: string;
     photoUploadLinkText?: string;
+    attachments?: EmailAttachment[];
   };
 }
 
@@ -490,5 +492,118 @@ export function getStoredInitialEmailLinks(
     initialEmailRecord: initialRecord,
   };
 }
+
+/**
+ * Retrieves the attachments from the most recent prior email in saved history for a technician
+ * and work week, strictly matching the immediate previous email/version relative to the incoming version.
+ *
+ * For example:
+ * - If the incoming email is v3 (incomingVersion = 3), the attachments that should be added
+ *   to the incoming email are the attachments from v2, NOT v1 or initial.
+ * - If the incoming email is v2 (incomingVersion = 2), the attachments from v1 are fetched, not initial.
+ * - If the incoming email is v1 (incomingVersion = 1), the attachments from initial (Version 0) are fetched.
+ *
+ * If the immediate prior version does not have attachments, it checks the next most recent prior record
+ * with attachments (strictly older than incoming version).
+ */
+export function getMostRecentPriorAttachments(
+  technicianName: string,
+  workWeek: string,
+  incomingVersion: number | string = 1
+): {
+  attachments: EmailAttachment[];
+  sourceVersion?: string | number;
+  sourceDateFormatted?: string;
+  sourceSubject?: string;
+  sourceRecord?: GeneratedEmailRecord | null;
+} {
+  const history = getGeneratedEmailsForTechAndWeek(technicianName, workWeek);
+  if (!history || history.length === 0) {
+    return { attachments: [] };
+  }
+
+  const incomingVerNum = extractVersionNumber(incomingVersion);
+
+  // Filter for records strictly prior to the incoming version
+  // If incomingVerNum is 3, candidates are versions with version number < 3 (e.g. 2, 1, 0)
+  // If incomingVerNum is 2, candidates are 1, 0
+  // If incomingVerNum is 1, candidates are 0 (initial)
+  let priorRecords = history.filter((rec) => {
+    const ver = extractVersionNumber(rec.version);
+    if (incomingVerNum > 0) {
+      return ver < incomingVerNum;
+    }
+    return false;
+  });
+
+  // Fallback: If no records match by strict version number but history exists and incomingVerNum > 1,
+  // take records sorted from newest to oldest
+  if (priorRecords.length === 0 && incomingVerNum > 1 && history.length > 0) {
+    priorRecords = [...history];
+  }
+
+  if (priorRecords.length === 0) {
+    return { attachments: [] };
+  }
+
+  // Sort prior records:
+  // 1. Primary: highest version number descending (e.g. v2 > v1 > v0)
+  // 2. Secondary: latest timestamp descending
+  priorRecords.sort((a, b) => {
+    const verA = extractVersionNumber(a.version);
+    const verB = extractVersionNumber(b.version);
+    if (verB !== verA) {
+      return verB - verA;
+    }
+    return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+  });
+
+  // The immediate target version is incomingVerNum - 1 (e.g. 2 when incoming is 3)
+  const immediateTargetVersion = incomingVerNum > 0 ? incomingVerNum - 1 : 0;
+
+  // 1. Check if a record matching the immediate prior version has attachments
+  const directPriorRecord = priorRecords.find((rec) => {
+    const verNum = extractVersionNumber(rec.version);
+    if (verNum === immediateTargetVersion) {
+      const atts = rec.attachments || rec.brandingConfig?.attachments;
+      return atts && atts.length > 0;
+    }
+    return false;
+  });
+
+  if (directPriorRecord) {
+    const atts = directPriorRecord.attachments || directPriorRecord.brandingConfig?.attachments || [];
+    return {
+      attachments: atts.map((a) => ({
+        ...a,
+        id: `att-inherited-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      })),
+      sourceVersion: directPriorRecord.version,
+      sourceDateFormatted: directPriorRecord.dateFormatted,
+      sourceSubject: directPriorRecord.subject,
+      sourceRecord: directPriorRecord,
+    };
+  }
+
+  // 2. Otherwise check the most recent prior record with attachments (highest version < incoming)
+  for (const rec of priorRecords) {
+    const atts = rec.attachments || rec.brandingConfig?.attachments;
+    if (atts && atts.length > 0) {
+      return {
+        attachments: atts.map((a) => ({
+          ...a,
+          id: `att-inherited-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        })),
+        sourceVersion: rec.version,
+        sourceDateFormatted: rec.dateFormatted,
+        sourceSubject: rec.subject,
+        sourceRecord: rec,
+      };
+    }
+  }
+
+  return { attachments: [] };
+}
+
 
 
