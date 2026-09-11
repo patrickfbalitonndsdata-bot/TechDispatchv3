@@ -255,7 +255,17 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
       const isTmc = current.studyType.toUpperCase().includes("TMC");
       const isAtr = current.studyType.toUpperCase().includes("ATR");
 
-      if (field === "studyType" || field === "addOns" || field === "projectNumber") {
+      if (field === "fullStudyFormatted") {
+        current.fullStudyFormatted = value;
+        const trimmed = value.trim();
+        if (trimmed.toUpperCase().startsWith("ALG ")) {
+          current.addOns = trimmed.slice(4).trim();
+          current.emailSubject = formatAtrSubject(current.projectNumber, current.addOns);
+        } else if (trimmed.toUpperCase().startsWith("TMC ")) {
+          current.addOns = trimmed.slice(4).trim();
+          current.emailSubject = formatTmcSubject(current.projectNumber);
+        }
+      } else if (field === "studyType" || field === "addOns" || field === "projectNumber") {
         if (isAtr) {
           current.fullStudyFormatted = current.addOns ? `ALG ${current.addOns}` : "ALG Volume";
           current.emailSubject = formatAtrSubject(current.projectNumber, current.addOns);
@@ -398,6 +408,15 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
             title="Load Fort Collins CO 26-770118 (ATR/ALG Speed & Class)"
           >
             ATR 2 (Ft Collins)
+          </button>
+          <button
+            type="button"
+            onClick={() => handleLoadSample(3)}
+            className="text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1 shadow-2xs"
+            title="Load Multi-Detail ATR (3 + 2 = 5 Locations, joined Add-ons with '/')"
+          >
+            <Layers className="w-3 h-3 text-amber-700" />
+            <span>Multi-Detail ATR (3+2 Locs)</span>
           </button>
           <button
             type="button"
@@ -717,12 +736,19 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
                     </div>
 
                     <div>
-                      <label className="block text-[10px] font-bold text-zinc-700 mb-0.5">Location/s Count</label>
+                      <label className="block text-[10px] font-bold text-zinc-700 mb-0.5 flex items-center justify-between">
+                        <span>Location/s Count</span>
+                        {pdf.detailSections && pdf.detailSections.length > 1 && (
+                          <span className="text-[9px] text-amber-700 font-semibold">
+                            Total: {pdf.detailSections.map((s) => s.count).join(" + ")}
+                          </span>
+                        )}
+                      </label>
                       <input
                         type="text"
                         value={pdf.locationsCount}
                         onChange={(e) => handleUpdatePdfField(idx, "locationsCount", e.target.value)}
-                        placeholder="e.g. 4"
+                        placeholder="e.g. 5"
                         className="w-full bg-white border border-zinc-300 rounded px-2 py-1 text-xs font-semibold text-zinc-900"
                       />
                     </div>
@@ -757,6 +783,20 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
                         value={pdf.addOns}
                         onChange={(e) => handleUpdatePdfField(idx, "addOns", e.target.value)}
                         placeholder="e.g. Volume or Pedestrians, Bicycles..."
+                        className="w-full bg-white border border-zinc-300 rounded px-2 py-1 text-xs font-semibold text-zinc-900"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="block text-[10px] font-bold text-zinc-700 mb-0.5 flex items-center justify-between">
+                        <span>Study Input (Formatted)</span>
+                        <span className="text-[10px] text-zinc-500 font-normal">e.g. ALG Volume, Speed/Volume, Classification, Speed</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={pdf.fullStudyFormatted}
+                        onChange={(e) => handleUpdatePdfField(idx, "fullStudyFormatted", e.target.value)}
+                        placeholder="e.g. ALG Volume, Speed/Volume, Classification, Speed"
                         className="w-full bg-white border border-zinc-300 rounded px-2 py-1 text-xs font-semibold text-zinc-900"
                       />
                     </div>
@@ -1039,7 +1079,7 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
                         <span className="bg-yellow-300 text-black font-bold px-1.5 py-0.5 rounded-xs inline-block shadow-2xs">
                           {formatUrgencyLine(
                             combinedEmail.tmcPdf?.urgency || "Priority Client",
-                            scheduleOption === "none" ? "today_next_week" : scheduleOption
+                            scheduleOption
                           )}
                         </span>
                       </p>
@@ -1119,10 +1159,45 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
 
                         <div>
                           <span className="text-[10px] text-zinc-400 uppercase font-bold block">Location/s (Project Details)</span>
-                          <span className="font-bold text-zinc-900 bg-white border border-zinc-200 px-2 py-0.5 rounded inline-block mt-0.5">
-                            {activeSinglePdf.locationsCount} Location{activeSinglePdf.locationsCount === "1" ? "" : "s"}
-                          </span>
+                          <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                            <span className="font-bold text-zinc-900 bg-white border border-zinc-200 px-2 py-0.5 rounded inline-block">
+                              {activeSinglePdf.locationsCount} Location{activeSinglePdf.locationsCount === "1" ? "" : "s"}
+                            </span>
+                            {activeSinglePdf.detailSections && activeSinglePdf.detailSections.length > 1 && (
+                              <span className="text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <Layers className="w-2.5 h-2.5" />
+                                Sum of {activeSinglePdf.detailSections.length} sections ({activeSinglePdf.detailSections.map((s) => s.count).join(" + ")} = {activeSinglePdf.locationsCount})
+                              </span>
+                            )}
+                          </div>
                         </div>
+
+                        {activeSinglePdf.detailSections && activeSinglePdf.detailSections.length > 1 && (
+                          <div className="bg-amber-50/80 border border-amber-200/80 rounded-md p-2 text-[11px] space-y-1.5">
+                            <div className="flex items-center justify-between text-amber-900 font-bold">
+                              <span className="flex items-center gap-1">
+                                <Layers className="w-3 h-3 text-amber-700" />
+                                <span>{activeSinglePdf.detailSections.length} Project Detail Sections Detected</span>
+                              </span>
+                              <span className="text-[10px] bg-amber-200/80 text-amber-900 px-1.5 py-0.5 rounded font-mono font-bold">
+                                Total: {activeSinglePdf.locationsCount}
+                              </span>
+                            </div>
+                            <div className="space-y-1">
+                              {activeSinglePdf.detailSections.map((sec, secIdx) => (
+                                <div key={secIdx} className="bg-white/90 border border-amber-200 rounded px-2 py-1 text-zinc-800 flex items-center justify-between text-[11px]">
+                                  <div>
+                                    <span className="font-bold text-zinc-900">Part {secIdx + 1}:</span>{" "}
+                                    <span className="font-mono font-semibold">{sec.count} loc ({sec.rawLine})</span>
+                                  </div>
+                                  <div className="text-[10px] font-semibold text-indigo-700">
+                                    w/ {sec.addOns || "Volume"}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         <div>
                           <span className="text-[10px] text-zinc-400 uppercase font-bold block">Study Line</span>
@@ -1135,6 +1210,13 @@ export const AlgTmcApprovalPanel: React.FC<AlgTmcApprovalPanelProps> = ({ onScan
                           <span className="text-[10px] text-zinc-400 uppercase font-bold block">Add-ons (Next to Study)</span>
                           <p className="font-medium text-indigo-900 bg-indigo-50/70 border border-indigo-200 p-1.5 rounded mt-0.5 text-[11px]">
                             {activeSinglePdf.addOns || "None detected"}
+                          </p>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-zinc-400 uppercase font-bold block">Study (Formatted)</span>
+                          <p className="font-semibold text-emerald-900 bg-emerald-50/70 border border-emerald-200 p-1.5 rounded mt-0.5 text-[11px] font-mono">
+                            {activeSinglePdf.fullStudyFormatted}
                           </p>
                         </div>
                       </div>
