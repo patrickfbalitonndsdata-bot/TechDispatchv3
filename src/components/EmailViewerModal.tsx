@@ -16,7 +16,7 @@ import {
   Paperclip,
 } from "lucide-react";
 import { GeneratedEmailRecord } from "../utils/generatedEmailStorage";
-import { copyRichHtmlToClipboard } from "../utils/outlookTemplateGenerator";
+import { copyRichHtmlToClipboard, cleanTechnicianName } from "../utils/outlookTemplateGenerator";
 
 interface EmailViewerModalProps {
   isOpen: boolean;
@@ -82,7 +82,7 @@ export const EmailViewerModal: React.FC<EmailViewerModalProps> = ({
       const altBoundary = `----=_AltPart_${Math.random().toString(36).substring(2)}_${Date.now()}`;
       const lines: string[] = [
         `From: "NDS Dispatch Scheduling" <dispatch@ndsdata.com>`,
-        `To: "${record.cleanTechName}" <technician@ndsdata.com>`,
+        `To: "${cleanTechnicianName(record.cleanTechName)}" <technician@ndsdata.com>`,
         `Subject: ${record.subject}`,
         `MIME-Version: 1.0`,
         `X-Unsent: 1`,
@@ -127,7 +127,7 @@ export const EmailViewerModal: React.FC<EmailViewerModalProps> = ({
       const boundary = "----=_NextPart_" + Date.now().toString(16);
       emlContent = [
         `From: "NDS Dispatch Scheduling" <dispatch@ndsdata.com>`,
-        `To: "${record.cleanTechName}" <technician@ndsdata.com>`,
+        `To: "${cleanTechnicianName(record.cleanTechName)}" <technician@ndsdata.com>`,
         `Subject: ${record.subject}`,
         `MIME-Version: 1.0`,
         `Content-Type: multipart/alternative; boundary="${boundary}"`,
@@ -186,7 +186,7 @@ export const EmailViewerModal: React.FC<EmailViewerModalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-zinc-400 flex items-center space-x-2 mt-0.5">
-                <span>{record.cleanTechName}</span>
+                <span>{cleanTechnicianName(record.cleanTechName)}</span>
                 <span>•</span>
                 <span>{record.workWeek}</span>
                 <span>•</span>
