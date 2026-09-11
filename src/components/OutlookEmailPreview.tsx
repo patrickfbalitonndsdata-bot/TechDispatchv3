@@ -1175,7 +1175,7 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
               )}
             </div>
             <p className="text-xs text-blue-100">
-              Generating for <span className="text-white font-bold">{roster.technicianName}</span> ({roster.technicianEmail})
+              Generating for <span className="text-white font-bold">{cleanTechnicianName(roster.technicianName)}</span> ({roster.technicianEmail})
             </p>
           </div>
         </div>
@@ -2671,7 +2671,7 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
               <div className="flex items-center">
                 <span className="w-16 font-semibold text-zinc-400 uppercase text-[10px]">To:</span>
                 <span className="font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                  {roster.technicianName} &lt;{roster.technicianEmail}&gt;
+                  {cleanTechnicianName(roster.technicianName)} &lt;{roster.technicianEmail}&gt;
                 </span>
               </div>
               <div className="flex items-center">
@@ -2739,7 +2739,7 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
               <div className="p-3 bg-zinc-50 border-b border-zinc-200 text-xs">
                 <div className="font-bold text-zinc-900 text-[13px]">{subject}</div>
                 <div className="text-[11px] text-zinc-500 mt-1">From: {branding.dispatcherName}</div>
-                <div className="text-[11px] text-blue-600">To: {roster.technicianName}</div>
+                <div className="text-[11px] text-blue-600">To: {cleanTechnicianName(roster.technicianName)}</div>
                 {attachments.length > 0 && (
                   <div className="mt-1 text-[11px] text-zinc-600 flex items-center space-x-1 bg-white px-2 py-0.5 rounded border border-zinc-200">
                     <Paperclip className="w-3 h-3 text-blue-600 shrink-0" />
