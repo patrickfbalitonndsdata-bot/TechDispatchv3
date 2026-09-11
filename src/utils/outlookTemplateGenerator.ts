@@ -10,6 +10,11 @@ import {
 import { extractProjectNumber, extractLocationSuffix, parseDateTimeString } from "./csvParser";
 import { getTechnicianAirtableLink, getTechnicianGoogleMapsLink } from "./technicianRosterDirectory";
 import { getStoredPreviousUpdateNotes } from "./generatedEmailStorage";
+import {
+  getEffectiveSignature,
+  renderEmailSignatureHtml,
+  renderEmailSignatureText,
+} from "./signaturePresets";
 
 export const DEFAULT_COD_SCHOOL_ZONE_FORM_URL =
   "https://docs.google.com/forms/d/e/1FAIpQLSdfpvqvsfjC8gA8gKoByJdu1CQafOhvTP_gWMQvItjEvcprMg/viewform";
@@ -53,6 +58,8 @@ export const DEFAULT_BRANDING: TemplateBranding = {
   conductStudyEnabled: false,
   pedsConductLines: [],
   dayItemOrderOverrides: {},
+  emailSignatureEnabled: false,
+  emailSignaturePreset: "patrick",
 };
 
 /**
@@ -2496,6 +2503,14 @@ export const MACHINE_LOCS_TO_CAM_NOTE =
 export const PEDS_SIGHT_DISTANCE_NOTE =
   "Note: For PEDS locations, please make sure to conduct the sight distance requirement and complete the attached PDF/form link for this SPEED project. Please coordinate with Douglas if you have any questions.";
 
+export const MAINLINE_STUDY_NOTE =
+  `Notes: Resolution: 720p for Class, 1080p for Speed; use HD SD cards. High-Speed/Mainline Speed (>50 MPH): 1080p, 8 Bitrate, 30 FPS.
+Set all cameras to 30 FPS and test the required resolution/video quality before deployment.
+Mount cameras 20+ ft high, close to the road, and facing the rear of vehicles. Short poles require OPS/Kevin approval.
+Capture one direction of traffic only. 2 lanes recommended; 3 lanes require approximately 25 ft height; up to 4 lanes for VOLUME ONLY.
+Securely fasten the camera pole to prevent tilting/shaking, which can affect speed-data accuracy.
+For any camera setup concerns, coordinate with OPS.`;
+
 /**
  * Checks if an order or project has "Speed" in Service Type Add Ons (or any add-on column/field)
  */
@@ -2943,6 +2958,11 @@ export function generateOutlookHtml(
     ? `<br />\n      <span style="font-size: 12pt; mso-ansi-font-size: 12.0pt; mso-bidi-font-size: 12.0pt;">📝</span> <a href="${schoolZonePedFormUrl}" style="color: #800080; text-decoration: underline; font-size: 11pt; mso-ansi-font-size: 11.0pt; mso-bidi-font-size: 11.0pt;" target="_blank">${escapeHtml(schoolZonePedFormText)}</a>`
     : "";
 
+  // Email Signature HTML (James, Kyle, Patrick, Katrin)
+  const signatureHtml = branding.emailSignatureEnabled
+    ? renderEmailSignatureHtml(getEffectiveSignature(branding))
+    : "";
+
   // If exact_nds_template is selected (DEFAULT)
   if (style === "exact_nds_template") {
     const daysDefinitions: Array<{ key: string; displayName: string; baseDayName: string }> = branding.sundaySundayEnabled
@@ -3076,6 +3096,8 @@ export function generateOutlookHtml(
         </li>
       </ul>
     </div>
+
+    ${signatureHtml}
 
   </div>
 </body>
@@ -3594,6 +3616,8 @@ export function generateOutlookHtml(
               : ""
           }
 
+          ${signatureHtml}
+
           <!-- Dispatcher Sign-off & Hotline Footer -->
           <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top: 1px solid #E2E8F0; padding-top: 16px; margin-top: 8px;">
             <tr>
@@ -3757,6 +3781,12 @@ export function generatePlainTextEmail(roster: TechnicianRoster, branding: Templ
   lines.push(`•\tPlease remember to click “REPLY ALL” to ensure all necessary parties receive the report. Failure to submit a field report will result in disciplinary action.`);
   lines.push(`•\tIf any issues arise—whether general or data-related—please reach out to your field manager. If you do not receive a response, follow your escalation chain.`);
   lines.push(`•\tOnce data is obtained, begin the upload process immediately before ending your shift, regardless of whether the data is good or bad. Failure to do so will result in disciplinary action. Your shift is not over until you have successfully completed the transfer to FileZilla and/or sent the data to ${dataUploadEmail}, and submitted your field report.`);
+
+  if (branding.emailSignatureEnabled) {
+    const signature = getEffectiveSignature(branding);
+    lines.push("");
+    lines.push(renderEmailSignatureText(signature));
+  }
 
   return lines.join("\n");
 }
