@@ -143,9 +143,17 @@ export function clearStoredGeneratedEmailsForTech(
   workWeek?: string
 ): GeneratedEmailRecord[] {
   const cleanTech = cleanTechnicianName(technicianName).toLowerCase();
+  const rawTech = (technicianName || "").toLowerCase().trim();
   const existing = getStoredGeneratedEmails();
   const updated = existing.filter((e) => {
-    if (e.cleanTechName.toLowerCase() !== cleanTech) return true;
+    const eClean = cleanTechnicianName(e.cleanTechName).toLowerCase();
+    const eRaw = (e.technicianName || "").toLowerCase().trim();
+    const matchesTech =
+      e.cleanTechName.toLowerCase() === cleanTech ||
+      eClean === cleanTech ||
+      eRaw === rawTech ||
+      cleanTechnicianName(eRaw).toLowerCase() === cleanTech;
+    if (!matchesTech) return true;
     if (workWeek && e.workWeek !== workWeek) return true;
     return false;
   });
@@ -177,7 +185,14 @@ export function clearStoredGeneratedEmailsForWorkWeeks(
 
     if (cleanTech) {
       // only delete if tech matches
-      if (e.cleanTechName.toLowerCase() === cleanTech) {
+      const eClean = cleanTechnicianName(e.cleanTechName).toLowerCase();
+      const eRaw = (e.technicianName || "").toLowerCase().trim();
+      const matchesTech =
+        e.cleanTechName.toLowerCase() === cleanTech ||
+        eClean === cleanTech ||
+        eRaw === (technicianName || "").toLowerCase().trim() ||
+        cleanTechnicianName(eRaw).toLowerCase() === cleanTech;
+      if (matchesTech) {
         return false; // delete
       }
       return true; // keep for other techs
@@ -202,10 +217,21 @@ export function getGeneratedEmailsForTechAndWeek(
   workWeek: string
 ): GeneratedEmailRecord[] {
   const cleanTech = cleanTechnicianName(technicianName).toLowerCase();
+  const rawTech = (technicianName || "").toLowerCase().trim();
   const workWeekKey = buildWorkWeekKey(technicianName, workWeek);
   const all = getStoredGeneratedEmails();
 
-  return all.filter((e) => e.workWeekKey === workWeekKey || (e.cleanTechName.toLowerCase() === cleanTech && e.workWeek === workWeek));
+  return all.filter((e) => {
+    if (e.workWeekKey === workWeekKey) return true;
+    const eClean = cleanTechnicianName(e.cleanTechName).toLowerCase();
+    const eRaw = (e.technicianName || "").toLowerCase().trim();
+    const matchesTech =
+      e.cleanTechName.toLowerCase() === cleanTech ||
+      eClean === cleanTech ||
+      eRaw === rawTech ||
+      cleanTechnicianName(eRaw).toLowerCase() === cleanTech;
+    return matchesTech && e.workWeek === workWeek;
+  });
 }
 
 /**
