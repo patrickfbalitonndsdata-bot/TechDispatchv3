@@ -41,6 +41,8 @@ import {
   Footprints,
   MoveUp,
   MoveDown,
+  FileSignature,
+  Eye,
 } from "lucide-react";
 import {
   TechnicianRoster,
@@ -49,7 +51,13 @@ import {
   EmailAttachment,
   PedsConductLineItem,
   WorkOrder,
+  EmailSignaturePresetId,
 } from "../types";
+import { EmailSignatureModal } from "./EmailSignatureModal";
+import {
+  EMAIL_SIGNATURE_PRESETS,
+  SIGNATURE_PRESET_OPTIONS,
+} from "../utils/signaturePresets";
 import {
   generateOutlookHtml,
   generatePlainTextEmail,
@@ -72,6 +80,7 @@ import {
   LADOTD_TUE_NOTE,
   MACHINE_LOCS_TO_CAM_NOTE,
   PEDS_SIGHT_DISTANCE_NOTE,
+  MAINLINE_STUDY_NOTE,
 } from "../utils/outlookTemplateGenerator";
 import {
   GeneratedEmailRecord,
@@ -83,6 +92,8 @@ import {
   getRecommendedUpdateVersion,
   getStoredPreviousUpdateNotes,
   getStoredInitialEmailLinks,
+  getMostRecentPriorAttachments,
+  extractVersionNumber,
 } from "../utils/generatedEmailStorage";
 import { GeneratedEmailsHistoryModal } from "./GeneratedEmailsHistoryModal";
 import { CodSightDistanceModal } from "./CodSightDistanceModal";
@@ -150,6 +161,12 @@ const DEFAULT_NOTE_PRESETS: NotePreset[] = [
     text: "Note: Continue installing locations not finished yesterday until all inventories have been used up.",
     isBuiltIn: true,
   },
+  {
+    id: "preset-mainline-study",
+    title: "Mainline Study Notes",
+    text: MAINLINE_STUDY_NOTE,
+    isBuiltIn: true,
+  },
 ];
 
 const STALE_LEGACY_PRESET_IDS = new Set([
@@ -178,6 +195,8 @@ interface OutlookEmailPreviewProps {
   onToggleConductStudy?: (val: boolean) => void;
   onUpdatePedsConductLines?: (lines: PedsConductLineItem[]) => void;
   onUpdateDayItemOrderOverrides?: (overrides: Record<string, string[]>) => void;
+  onToggleEmailSignature?: (val: boolean) => void;
+  onSelectEmailSignaturePreset?: (preset: EmailSignaturePresetId) => void;
   onUpdateBranding?: (newBranding: Partial<TemplateBranding>) => void;
   onClearPreview?: () => void;
 }
@@ -199,6 +218,8 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
   onToggleConductStudy,
   onUpdatePedsConductLines,
   onUpdateDayItemOrderOverrides,
+  onToggleEmailSignature,
+  onSelectEmailSignaturePreset,
   onUpdateBranding,
   onClearPreview,
 }) => {
@@ -210,6 +231,7 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
   const [showSavePresetModal, setShowSavePresetModal] = useState(false);
   const [newPresetTitle, setNewPresetTitle] = useState("");
   const [presetFeedback, setPresetFeedback] = useState<string | null>(null);
+  const [showSignatureModal, setShowSignatureModal] = useState(false);
 
   // Conduct Study & PEDS Conduct Sight Distance State
   const [selectedPedsDay, setSelectedPedsDay] = useState<string>("Monday");
@@ -301,13 +323,80 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
     }
   };
 
+  // Track details if current attachments were inherited from a prior version in saved history
+  const [inheritedAttachmentInfo, setInheritedAttachmentInfo] = useState<{
+    sourceVersion: string | number;
+    count: number;
+    sourceSubject?: string;
+  } | null>(null);
+
+  /**
+   * Fetches attachments from the most recent prior email in saved history for this technician and work week.
+   * Strictly fetches attachments from the immediate prior version (e.g. for v3, fetches from v2; not v1 or initial).
+   */
+  const fetchRecentEmailAttachments = (targetIncomingVersion?: number | string, notify: boolean = true) => {
+    const versionToUse = targetIncomingVersion !== undefined ? targetIncomingVersion : (branding.updateVersion || 1);
+    const result = getMostRecentPriorAttachments(
+      roster.technicianName,
+      weekInfo.formattedRange,
+      versionToUse
+    );
+
+    if (result.attachments && result.attachments.length > 0) {
+      updateAttachments(result.attachments);
+      const verLabel = result.sourceVersion !== undefined && result.sourceVersion !== null
+        ? (String(result.sourceVersion).toLowerCase().startsWith("v") || String(result.sourceVersion).toLowerCase().startsWith("update")
+            ? String(result.sourceVersion)
+            : `v${result.sourceVersion}`)
+        : "recent email";
+      setInheritedAttachmentInfo({
+        sourceVersion: verLabel,
+        count: result.attachments.length,
+        sourceSubject: result.sourceSubject,
+      });
+      if (notify) {
+        setPresetFeedback(`Fetched ${result.attachments.length} attachment(s) from ${verLabel} (Saved History)!`);
+        setTimeout(() => setPresetFeedback(null), 3500);
+      }
+      return result.attachments;
+    } else {
+      setInheritedAttachmentInfo(null);
+      if (notify) {
+        const prevVerNum = extractVersionNumber(versionToUse) > 0 ? extractVersionNumber(versionToUse) - 1 : 0;
+        const prevLabel = prevVerNum === 0 ? "Initial (v0)" : `v${prevVerNum}`;
+        setPresetFeedback(`No attachments found in prior email (${prevLabel}) for ${cleanTechnicianName(roster.technicianName)}.`);
+        setTimeout(() => setPresetFeedback(null), 3500);
+      }
+      return [];
+    }
+  };
+
+  const handleToggleEmailUpdates = (nextVal: boolean) => {
+    if (onToggleEmailUpdates) {
+      onToggleEmailUpdates(nextVal);
+    } else if (onUpdateBranding) {
+      onUpdateBranding({ emailUpdatesEnabled: nextVal });
+    }
+
+    if (nextVal) {
+      // When Email Updates is toggled ON, automatically fetch attachments from the most recent prior email
+      // e.g. for incoming v3, fetch from v2
+      const currentVer = branding.updateVersion || 1;
+      fetchRecentEmailAttachments(currentVer, true);
+    }
+  };
+
   const handleRemoveAttachment = (id: string) => {
     const updated = attachments.filter((a) => a.id !== id);
     updateAttachments(updated);
+    if (updated.length === 0) {
+      setInheritedAttachmentInfo(null);
+    }
   };
 
   const handleClearAllAttachments = () => {
     updateAttachments([]);
+    setInheritedAttachmentInfo(null);
     setPresetFeedback("Cleared all attachments.");
     setTimeout(() => setPresetFeedback(null), 2500);
   };
@@ -575,6 +664,22 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
           onUpdateBranding({ updateVersion: nextVer });
         }
       }
+
+      // Auto-fetch attachments from the most recent prior email in saved history (e.g. for v3, fetch from v2, not older)
+      const priorAtts = getMostRecentPriorAttachments(techName, workWeek, nextVer);
+      if (priorAtts.attachments && priorAtts.attachments.length > 0) {
+        updateAttachments(priorAtts.attachments);
+        const verLabel = priorAtts.sourceVersion !== undefined
+          ? (String(priorAtts.sourceVersion).toLowerCase().startsWith("v") || String(priorAtts.sourceVersion).toLowerCase().startsWith("update")
+              ? String(priorAtts.sourceVersion)
+              : `v${priorAtts.sourceVersion}`)
+          : `v${nextVer - 1}`;
+        setInheritedAttachmentInfo({
+          sourceVersion: verLabel,
+          count: priorAtts.attachments.length,
+          sourceSubject: priorAtts.sourceSubject,
+        });
+      }
     } else {
       setAutoVersionNotice(null);
     }
@@ -612,6 +717,7 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
       googleMapsUrl: activeCustomMapUrl || resolvedGoogleMapsUrl,
       airtableUrl: resolvedAirtable,
       photoUploadUrl: resolvedPhoto,
+      attachments: attachments.length > 0 ? attachments : undefined,
       brandingConfig: {
         additionalNotesEnabled: branding.additionalNotesEnabled,
         emailUpdatesEnabled: branding.emailUpdatesEnabled,
@@ -631,6 +737,7 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
         customTechAirtableLinks: branding.customTechAirtableLinks,
         photoUploadUrl: branding.photoUploadUrl,
         photoUploadLinkText: branding.photoUploadLinkText,
+        attachments: attachments.length > 0 ? attachments : undefined,
       },
     });
 
@@ -826,6 +933,12 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
       onUpdateEmailUpdateDetails(newVersion, branding.updateNotes || "");
     } else if (onUpdateBranding) {
       onUpdateBranding({ updateVersion: newVersion });
+    }
+
+    // When version changes with Email Updates enabled, automatically fetch attachments from the most recent prior email
+    // e.g. if user sets incoming email to v3, fetch from v2, not v1 or initial
+    if (branding.emailUpdatesEnabled) {
+      fetchRecentEmailAttachments(newVersion, true);
     }
   };
 
@@ -1171,13 +1284,7 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
 
           {/* Email Updates Toggle */}
           <button
-            onClick={() => {
-              if (onToggleEmailUpdates) {
-                onToggleEmailUpdates(!branding.emailUpdatesEnabled);
-              } else if (onUpdateBranding) {
-                onUpdateBranding({ emailUpdatesEnabled: !branding.emailUpdatesEnabled });
-              }
-            }}
+            onClick={() => handleToggleEmailUpdates(!branding.emailUpdatesEnabled)}
             className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer shadow-xs ${
               branding.emailUpdatesEnabled
                 ? "bg-yellow-400 hover:bg-yellow-300 text-yellow-950 border-yellow-300 font-bold"
@@ -1284,6 +1391,77 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
                 </span>
               </button>
             )}
+          </div>
+
+          {/* Email Signature Toggle Feature & Presets (James, Kyle, Patrick, Katrin) */}
+          <div className="flex items-center space-x-1">
+            <button
+              onClick={() => {
+                const nextVal = !branding.emailSignatureEnabled;
+                if (onToggleEmailSignature) {
+                  onToggleEmailSignature(nextVal);
+                } else if (onUpdateBranding) {
+                  onUpdateBranding({ emailSignatureEnabled: nextVal });
+                }
+              }}
+              className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer shadow-xs ${
+                branding.emailSignatureEnabled
+                  ? "bg-sky-300 hover:bg-sky-200 text-sky-950 border-sky-200 font-bold ring-2 ring-sky-300/60"
+                  : "bg-white/95 hover:bg-white text-zinc-800 border-white/80"
+              }`}
+              title="When toggled ON: Appends the selected email signature (James, Kyle, Patrick, Katrin) to the bottom of the email."
+            >
+              <FileSignature className={`w-3.5 h-3.5 ${branding.emailSignatureEnabled ? "text-sky-950" : "text-zinc-600"}`} />
+              <span className="font-bold">Email Signature</span>
+              <span
+                className={`w-2 h-2 rounded-full transition ${
+                  branding.emailSignatureEnabled ? "bg-sky-950 animate-pulse" : "bg-zinc-300"
+                }`}
+              />
+            </button>
+
+            {/* Signature Presets Picker Pills */}
+            <div className="flex items-center bg-blue-900/60 p-0.5 rounded-lg border border-blue-400/40">
+              {(["patrick", "james", "kyle", "katrin"] as const).map((presetKey) => {
+                const isSelected = (branding.emailSignaturePreset || "patrick") === presetKey;
+                const presetInfo = EMAIL_SIGNATURE_PRESETS[presetKey];
+                return (
+                  <button
+                    key={presetKey}
+                    type="button"
+                    onClick={() => {
+                      if (onSelectEmailSignaturePreset) {
+                        onSelectEmailSignaturePreset(presetKey);
+                      } else if (onUpdateBranding) {
+                        onUpdateBranding({
+                          emailSignaturePreset: presetKey,
+                          emailSignatureEnabled: true,
+                        });
+                      }
+                    }}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition cursor-pointer ${
+                      isSelected && branding.emailSignatureEnabled
+                        ? "bg-sky-300 text-sky-950 font-bold shadow-xs"
+                        : isSelected
+                        ? "bg-white/30 text-white font-semibold"
+                        : "text-blue-100 hover:text-white hover:bg-white/10"
+                    }`}
+                    title={`Select ${presetInfo.label} (${presetInfo.name} – ${presetInfo.title})`}
+                  >
+                    {presetInfo.label}
+                  </button>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={() => setShowSignatureModal(true)}
+                className="px-1.5 py-1 text-blue-200 hover:text-white hover:bg-white/10 rounded-md transition cursor-pointer"
+                title="Open Email Signature Settings & Live Preview"
+              >
+                <Eye className="w-3 h-3" />
+              </button>
+            </div>
           </div>
 
           {/* View Mode Switcher */}
@@ -1884,6 +2062,58 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Incoming Email Update Attachments Control */}
+            <div className="pt-2 border-t border-yellow-300/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+              <div className="flex items-center space-x-2 flex-wrap min-w-0">
+                <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-yellow-400 text-yellow-950 font-bold shadow-2xs">
+                  <Paperclip className="w-3 h-3 text-yellow-950" />
+                </span>
+                <span className="font-bold text-yellow-950">Update Attachments:</span>
+                {attachments.length > 0 ? (
+                  <span className="text-yellow-900 flex items-center space-x-1.5 flex-wrap">
+                    <span className="font-bold bg-white text-zinc-900 px-1.5 py-0.5 rounded border border-yellow-400 font-mono text-[11px]">
+                      {attachments.length} {attachments.length === 1 ? "file" : "files"}
+                    </span>
+                    {inheritedAttachmentInfo ? (
+                      <span className="bg-amber-200/90 text-amber-950 font-bold px-2 py-0.5 rounded-full border border-amber-400 text-[10px] flex items-center space-x-1">
+                        <span>Fetched from {inheritedAttachmentInfo.sourceVersion}</span>
+                        <span className="text-amber-800 font-normal">(most recent prior version)</span>
+                      </span>
+                    ) : (
+                      <span className="text-yellow-800 text-[11px]">
+                        (Attached to this incoming update)
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-yellow-800 italic text-[11px]">
+                    No attachments currently attached for this update.
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center space-x-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentVer = branding.updateVersion || 1;
+                    fetchRecentEmailAttachments(currentVer, true);
+                  }}
+                  className="bg-white hover:bg-yellow-100 text-yellow-950 border border-yellow-400 font-bold px-2.5 py-1 rounded-md text-[11px] transition cursor-pointer shadow-2xs flex items-center space-x-1"
+                  title={`Fetch attachments from the most recent prior email in saved history (e.g. for v3 fetch from v2, not older versions).`}
+                >
+                  <RotateCcw className="w-3 h-3 text-yellow-700" />
+                  <span>
+                    Fetch Attachments (
+                    {extractVersionNumber(branding.updateVersion || 1) > 1
+                      ? `v${extractVersionNumber(branding.updateVersion || 1) - 1}`
+                      : "Initial v0"}
+                    )
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -2277,7 +2507,7 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 flex-wrap">
             <input
               ref={fileInputRef}
               type="file"
@@ -2285,6 +2515,29 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
               onChange={(e) => handleFilesSelected(e.target.files)}
               className="hidden"
             />
+            <button
+              type="button"
+              onClick={() => {
+                const currentVer = branding.updateVersion || 1;
+                fetchRecentEmailAttachments(currentVer, true);
+              }}
+              className="bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold px-2.5 py-1.5 rounded-lg text-xs transition cursor-pointer border border-amber-300 flex items-center space-x-1.5 shadow-2xs"
+              title={`Fetch attachments from the most recent email version in Saved History for ${cleanTechnicianName(roster.technicianName)}, omitting older versions.`}
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+              <span>
+                Fetch from Prior Email
+                {branding.emailUpdatesEnabled && (
+                  <span className="font-normal text-amber-800 ml-1">
+                    (
+                    {extractVersionNumber(branding.updateVersion || 1) > 1
+                      ? `v${extractVersionNumber(branding.updateVersion || 1) - 1}`
+                      : "Initial"}
+                    )
+                  </span>
+                )}
+              </span>
+            </button>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -2330,7 +2583,19 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
               </span>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="space-y-2">
+              {inheritedAttachmentInfo && (
+                <div className="px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-md text-[11px] text-amber-950 flex items-center justify-between">
+                  <span className="flex items-center space-x-1.5">
+                    <Paperclip className="w-3 h-3 text-amber-700" />
+                    <span className="font-semibold">
+                      Attachments fetched from most recent email ({inheritedAttachmentInfo.sourceVersion})
+                    </span>
+                  </span>
+                  <span className="text-[10px] text-amber-700 italic">Older versions omitted</span>
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
               {attachments.map((att) => (
                 <div
                   key={att.id}
@@ -2364,7 +2629,8 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
                 <span>Add More</span>
               </button>
             </div>
-          )}
+          </div>
+        )}
         </div>
       </div>
 
@@ -2776,6 +3042,16 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
           setPresetFeedback("Updated City of Dallas (COD) settings & schedule!");
           setTimeout(() => setPresetFeedback(null), 3000);
         }}
+      />
+
+      {/* --- Email Signature Configuration & Live Preview Modal --- */}
+      <EmailSignatureModal
+        isOpen={showSignatureModal}
+        onClose={() => setShowSignatureModal(false)}
+        branding={branding}
+        onUpdateBranding={onUpdateBranding}
+        onToggleEmailSignature={onToggleEmailSignature}
+        onSelectPreset={onSelectEmailSignaturePreset}
       />
     </div>
   );
