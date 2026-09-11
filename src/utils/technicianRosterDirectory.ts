@@ -99,11 +99,18 @@ export const HARDCODED_TECHNICIAN_ROSTER: TechnicianDirectoryEntry[] = [
  */
 export function cleanTechnicianName(str: string): string {
   if (!str) return "";
-  const trimmed = str.trim();
+  let trimmed = str.trim();
+  trimmed = trimmed.replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, "").trim();
+  trimmed = trimmed.replace(/\\"/g, "").replace(/\\'/g, "").trim();
+  trimmed = trimmed.replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, "").trim();
   if (trimmed.includes(",")) {
-    const parts = trimmed.split(",").map((p) => p.trim());
-    if (parts.length >= 2 && parts[0] && parts[1]) {
-      return `${parts[1]} ${parts[0]}`;
+    const parts = trimmed.split(",").map((p) => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      const surname = parts[0];
+      const rest = parts.slice(1).join(" ").trim();
+      if (rest && surname) {
+        return `${rest} ${surname}`.trim();
+      }
     }
   }
   return trimmed;
@@ -140,7 +147,12 @@ export function getTechnicianAirtableLink(
   // 1. Check custom overrides from settings if provided
   if (customOverrides) {
     for (const [key, link] of Object.entries(customOverrides)) {
-      if (link && (cleanName(key) === cleaned || key.toLowerCase() === rawTrimmed.toLowerCase())) {
+      if (
+        link &&
+        (cleanName(key) === cleaned ||
+          key.toLowerCase() === rawTrimmed.toLowerCase() ||
+          cleanTechnicianName(key).toLowerCase() === cleanTechnicianName(technicianName).toLowerCase())
+      ) {
         return link;
       }
     }
@@ -221,7 +233,13 @@ export function getTechnicianGoogleMapsLink(
   // 2. Check custom overrides by technician name
   if (customOverrides) {
     for (const [key, link] of Object.entries(customOverrides)) {
-      if (link && link.trim() && (cleanName(key) === cleaned || key.toLowerCase() === rawTrimmed.toLowerCase())) {
+      if (
+        link &&
+        link.trim() &&
+        (cleanName(key) === cleaned ||
+          key.toLowerCase() === rawTrimmed.toLowerCase() ||
+          cleanTechnicianName(key).toLowerCase() === cleanTechnicianName(rawTechnicianName).toLowerCase())
+      ) {
         return link.trim();
       }
     }
