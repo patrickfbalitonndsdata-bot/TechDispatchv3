@@ -15,6 +15,7 @@ import {
   TemplateBranding,
   TemplateStyle,
   DispatchLogRecord,
+  EmailSignaturePresetId,
 } from "./types";
 import { parseCsvData } from "./utils/csvParser";
 import { DEFAULT_BRANDING, cleanTechnicianName } from "./utils/outlookTemplateGenerator";
@@ -230,6 +231,18 @@ export default function App() {
 
   const updateDayItemOrderOverrides = (overrides: Record<string, string[]>) => {
     setBranding((prev) => ({ ...prev, dayItemOrderOverrides: overrides }));
+  };
+
+  const toggleEmailSignature = (val: boolean) => {
+    setBranding((prev) => ({ ...prev, emailSignatureEnabled: val }));
+  };
+
+  const selectEmailSignaturePreset = (preset: EmailSignaturePresetId) => {
+    setBranding((prev) => ({
+      ...prev,
+      emailSignaturePreset: preset,
+      emailSignatureEnabled: true,
+    }));
   };
 
   const updateBranding = (partial: Partial<TemplateBranding>) => {
@@ -525,6 +538,8 @@ export default function App() {
                 onToggleConductStudy={toggleConductStudy}
                 onUpdatePedsConductLines={updatePedsConductLines}
                 onUpdateDayItemOrderOverrides={updateDayItemOrderOverrides}
+                onToggleEmailSignature={toggleEmailSignature}
+                onSelectEmailSignaturePreset={selectEmailSignaturePreset}
                 onUpdateBranding={updateBranding}
                 onClearPreview={handleClearAll}
               />
