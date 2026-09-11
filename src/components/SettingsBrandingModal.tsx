@@ -1,7 +1,13 @@
 import React, { useState } from "react";
-import { X, Settings, Building, Phone, Mail, Palette, CheckSquare, ShieldCheck, Check, Users, ExternalLink, Search } from "lucide-react";
-import { TemplateBranding } from "../types";
+import { X, Settings, Building, Phone, Mail, Palette, CheckSquare, ShieldCheck, Check, Users, ExternalLink, Search, FileSignature } from "lucide-react";
+import { TemplateBranding, EmailSignaturePresetId } from "../types";
 import { HARDCODED_TECHNICIAN_ROSTER } from "../utils/technicianRosterDirectory";
+import {
+  EMAIL_SIGNATURE_PRESETS,
+  SIGNATURE_PRESET_OPTIONS,
+  getEffectiveSignature,
+  renderEmailSignatureHtml,
+} from "../utils/signaturePresets";
 
 interface SettingsBrandingModalProps {
   isOpen: boolean;
@@ -356,6 +362,76 @@ export const SettingsBrandingModal: React.FC<SettingsBrandingModalProps> = ({
                   </span>
                 </div>
               </label>
+
+              {/* Email Signature Feature */}
+              <div className="pt-2 border-t border-zinc-100">
+                <label className="flex items-start space-x-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!form.emailSignatureEnabled}
+                    onChange={(e) => handleChange("emailSignatureEnabled", e.target.checked)}
+                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 mt-0.5"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2">
+                      <span className="font-medium text-zinc-900 block">Email Signature Toggle Feature</span>
+                      <span className="text-[9px] bg-sky-100 text-sky-900 font-bold px-1.5 py-0.2 rounded border border-sky-300">
+                        Signature
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-zinc-500 block mt-0.5">
+                      When enabled, automatically appends the selected sender signature to the bottom of the email schedule.
+                    </span>
+
+                    {/* Presets Picker (James, Kyle, Patrick, Katrin) */}
+                    <div className="mt-2.5 space-y-2">
+                      <span className="text-[10px] font-bold text-zinc-700 uppercase tracking-wider block">
+                        Choose Sender Preset:
+                      </span>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {SIGNATURE_PRESET_OPTIONS.map((preset) => {
+                          const isSelected = (form.emailSignaturePreset || "patrick") === preset.id;
+                          return (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              onClick={() => {
+                                handleChange("emailSignaturePreset", preset.id);
+                                handleChange("emailSignatureEnabled", true);
+                              }}
+                              className={`p-2 rounded-lg border text-left transition cursor-pointer ${
+                                isSelected
+                                  ? "border-blue-600 bg-blue-50 text-blue-950 font-bold ring-1 ring-blue-500"
+                                  : "border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs">{preset.label}</span>
+                                {isSelected && <Check className="w-3 h-3 text-blue-600" />}
+                              </div>
+                              <span className="text-[9px] text-zinc-500 block truncate mt-0.5">
+                                {preset.desc.split(" - ")[0]}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Small Live Preview in Settings Modal */}
+                      <div className="p-3 bg-white border border-zinc-200 rounded-lg mt-2 shadow-2xs">
+                        <div className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider mb-1">
+                          Signature Preview (Styled as per photo)
+                        </div>
+                        <div
+                          dangerouslySetInnerHTML={{
+                            __html: renderEmailSignatureHtml(getEffectiveSignature(form)),
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </label>
+              </div>
             </div>
           </div>
 
