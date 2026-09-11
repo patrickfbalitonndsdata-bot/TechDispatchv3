@@ -618,8 +618,12 @@ export interface GroupedProjectTask {
 }
 
 /**
- * Cleans enclosing quotes, escaped quotes, and extra whitespace from technician names.
- * e.g. '"May, Dustyn"' -> 'May, Dustyn', '""Dustyn May""' -> 'Dustyn May'
+ * Cleans enclosing quotes, escaped quotes, extra whitespace from technician names,
+ * and converts "Surname, Name" format into "Name Surname" format for email display.
+ * e.g. 'Fullerton, Dustin' -> 'Dustin Fullerton'
+ *      '"May, Dustyn"' -> 'Dustyn May'
+ *      'Fullerton, Dustin M.' -> 'Dustin M. Fullerton'
+ *      'Dustin Fullerton' -> 'Dustin Fullerton'
  */
 export function cleanTechnicianName(name?: string): string {
   if (!name) return "";
@@ -629,12 +633,31 @@ export function cleanTechnicianName(name?: string): string {
   // Remove escaped quotes or stray double quotes at boundaries
   cleaned = cleaned.replace(/\\"/g, "").replace(/\\'/g, "").trim();
   cleaned = cleaned.replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, "").trim();
+
+  // If in "Surname, Name" format (e.g. "Fullerton, Dustin" or "Fullerton, Dustin M."),
+  // convert to "Name Surname" ("Dustin Fullerton" or "Dustin M. Fullerton")
+  if (cleaned.includes(",")) {
+    const parts = cleaned.split(",").map((p) => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      const surname = parts[0];
+      const firstNameAndRest = parts.slice(1).join(" ").trim();
+      if (firstNameAndRest && surname) {
+        return `${firstNameAndRest} ${surname}`.trim();
+      }
+    }
+  }
+
   return cleaned;
 }
 
 /**
+ * Explicit alias to format a technician's name into "First Last" ("Name Surname") display order.
+ */
+export const formatTechnicianDisplayName = cleanTechnicianName;
+
+/**
  * Extracts first name from a technician's full name on a first-name basis.
- * Handles both "First Last" (e.g. "Dustyn May" -> "Dustyn") and "Last, First" (e.g. "May, Dustyn" -> "Dustyn").
+ * Handles both "First Last" (e.g. "Dustin Fullerton" -> "Dustin") and "Last, First" (e.g. "Fullerton, Dustin" -> "Dustin").
  * Automatically removes enclosing quotes.
  */
 export function extractFirstName(fullName?: string): string {
@@ -642,22 +665,9 @@ export function extractFirstName(fullName?: string): string {
   const cleaned = cleanTechnicianName(fullName);
   if (!cleaned) return "Technician";
 
-  // If name has a comma (e.g., "May, Dustyn" or "Fullerton, Dustin M.")
-  if (cleaned.includes(",")) {
-    const parts = cleaned.split(",").map((p) => cleanTechnicianName(p)).filter(Boolean);
-    if (parts.length >= 2) {
-      // The portion after the comma is the first name (and optional middle name/initial)
-      const afterComma = parts[1];
-      const firstNamePart = afterComma.split(/\s+/)[0];
-      if (firstNamePart) {
-        return cleanTechnicianName(firstNamePart);
-      }
-    }
-  }
-
-  // Standard "First Last" or single name format (e.g. "Dustyn May" -> "Dustyn")
+  // Standard "First Last" or single name format (e.g. "Dustin Fullerton" -> "Dustin")
   const firstWord = cleaned.split(/\s+/)[0];
-  return cleanTechnicianName(firstWord) || cleaned;
+  return firstWord || "Technician";
 }
 
 /**
@@ -2904,7 +2914,7 @@ export function generateEmailSubject(roster: TechnicianRoster, branding: Templat
   const updateSuffix = branding.emailUpdatesEnabled
     ? ` UPDATE v${branding.updateVersion !== undefined && branding.updateVersion !== "" ? branding.updateVersion : 1}`
     : "";
-  return `${roster.technicianName} Weekly Schedule ${weekInfo.formattedRange}${updateSuffix}`;
+  return `${cleanTechnicianName(roster.technicianName)} Weekly Schedule ${weekInfo.formattedRange}${updateSuffix}`;
 }
 
 // Generate Outlook HTML formatted email
@@ -3036,7 +3046,7 @@ export function generateOutlookHtml(
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Installs Schedule: ${roster.technicianName}</title>
+  <title>Installs Schedule: ${cleanTechnicianName(roster.technicianName)}</title>
   <style type="text/css">
     body, table, td, a, p, div, span, li { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
     table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
@@ -3488,7 +3498,7 @@ export function generateOutlookHtml(
   <![endif]-->
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Technician Schedule: ${roster.technicianName}</title>
+  <title>Technician Schedule: ${cleanTechnicianName(roster.technicianName)}</title>
   <style type="text/css">
     body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
     table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
@@ -3808,7 +3818,7 @@ export function generateEmlFileContent(
     const boundary = `----=_NextPart_${Math.random().toString(36).substring(2)}_${Date.now()}`;
     return [
       `From: "${branding.dispatcherName}" <${branding.replyToEmail}>`,
-      `To: "${roster.technicianName}" <${roster.technicianEmail}>`,
+      `To: "${cleanTechnicianName(roster.technicianName)}" <${roster.technicianEmail}>`,
       `Date: ${now}`,
       `Subject: ${subject}`,
       `MIME-Version: 1.0`,
@@ -3837,7 +3847,7 @@ export function generateEmlFileContent(
 
   const lines: string[] = [
     `From: "${branding.dispatcherName}" <${branding.replyToEmail}>`,
-    `To: "${roster.technicianName}" <${roster.technicianEmail}>`,
+    `To: "${cleanTechnicianName(roster.technicianName)}" <${roster.technicianEmail}>`,
     `Date: ${now}`,
     `Subject: ${subject}`,
     `MIME-Version: 1.0`,
@@ -3925,7 +3935,7 @@ export function downloadEmlFile(
   const effectiveAttachments = attachments || branding.attachments || [];
   const emlContent = generateEmlFileContent(roster, branding, style, effectiveAttachments);
   const blob = new Blob([emlContent], { type: "message/rfc822;charset=utf-8" });
-  const filename = `Schedule_${roster.date}_${roster.technicianName.replace(/[^a-zA-Z0-9]/g, "_")}.eml`;
+  const filename = `Schedule_${roster.date}_${cleanTechnicianName(roster.technicianName).replace(/[^a-zA-Z0-9]/g, "_")}.eml`;
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
   link.download = filename;
@@ -3948,7 +3958,7 @@ export async function downloadAllAsZip(
   const effectiveAttachments = attachments || branding.attachments || [];
 
   for (const roster of rosters) {
-    const cleanName = roster.technicianName.replace(/[^a-zA-Z0-9]/g, "_");
+    const cleanName = cleanTechnicianName(roster.technicianName).replace(/[^a-zA-Z0-9]/g, "_");
     const emlContent = generateEmlFileContent(roster, branding, style, effectiveAttachments);
     const htmlContent = generateOutlookHtml(roster, branding, style);
     const txtContent = generatePlainTextEmail(roster, branding);
