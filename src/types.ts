@@ -177,6 +177,25 @@ export interface TemplateBranding {
   customTechAirtableLinks?: Record<string, string>;
   // Email Attachments (.pdf, .kmz, .kml, .csv, etc.)
   attachments?: EmailAttachment[];
+  // Email Signature Feature (James, Kyle, Patrick, Katrin)
+  emailSignatureEnabled?: boolean;
+  emailSignaturePreset?: EmailSignaturePresetId;
+  customEmailSignature?: Partial<EmailSignatureDetails>;
+}
+
+export type EmailSignaturePresetId = "james" | "kyle" | "patrick" | "katrin" | "custom";
+
+export interface EmailSignatureDetails {
+  id: EmailSignaturePresetId;
+  label: string; // "James", "Kyle", "Patrick", "Katrin"
+  greeting: string; // e.g. "Kind regards," or "Thank you,"
+  name: string; // e.g. "Patrick Franz Baliton"
+  title: string; // e.g. "Scheduling Specialist (South Central Region)"
+  company: string; // e.g. "NDS – National Data & Surveying Services"
+  officeLabel?: string; // "Corporate Office:"
+  address: string; // "810 S. Atlantic Blvd, Suite A, Monterey Park CA 91754"
+  website?: string; // "www.ndsdata.com"
+  tagline: string; // "Celebrating 35+ Years of Excellence!"
 }
 
 export interface AutomationConfig {
