@@ -13,6 +13,7 @@ import {
   RotateCcw,
   Sparkles,
   ArrowLeftRight,
+  Paperclip,
 } from "lucide-react";
 import { GeneratedEmailRecord } from "../utils/generatedEmailStorage";
 import { copyRichHtmlToClipboard } from "../utils/outlookTemplateGenerator";
@@ -51,31 +52,102 @@ export const EmailViewerModal: React.FC<EmailViewerModalProps> = ({
     setTimeout(() => setCopiedSubject(false), 2000);
   };
 
+  const handleDownloadAttachment = (att: { name: string; base64Data: string; type?: string }) => {
+    try {
+      const byteCharacters = atob(att.base64Data);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: att.type || "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = att.name;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Failed to download attachment", e);
+    }
+  };
+
   const handleDownloadEml = () => {
     if (!record.htmlContent) return;
-    const boundary = "----=_NextPart_" + Date.now().toString(16);
-    const emlContent = [
-      `From: "NDS Dispatch Scheduling" <dispatch@ndsdata.com>`,
-      `To: "${record.cleanTechName}" <technician@ndsdata.com>`,
-      `Subject: ${record.subject}`,
-      `MIME-Version: 1.0`,
-      `Content-Type: multipart/alternative; boundary="${boundary}"`,
-      `X-Unsent: 1`,
-      ``,
-      `--${boundary}`,
-      `Content-Type: text/plain; charset=UTF-8`,
-      `Content-Transfer-Encoding: 7bit`,
-      ``,
-      record.plainTextContent || "NDS Technician Schedule",
-      ``,
-      `--${boundary}`,
-      `Content-Type: text/html; charset=UTF-8`,
-      `Content-Transfer-Encoding: 7bit`,
-      ``,
-      record.htmlContent,
-      ``,
-      `--${boundary}--`,
-    ].join("\r\n");
+    const activeAttachments = record.attachments || record.brandingConfig?.attachments || [];
+    let emlContent: string;
+
+    if (activeAttachments.length > 0) {
+      const mixedBoundary = `----=_MixedPart_${Math.random().toString(36).substring(2)}_${Date.now()}`;
+      const altBoundary = `----=_AltPart_${Math.random().toString(36).substring(2)}_${Date.now()}`;
+      const lines: string[] = [
+        `From: "NDS Dispatch Scheduling" <dispatch@ndsdata.com>`,
+        `To: "${record.cleanTechName}" <technician@ndsdata.com>`,
+        `Subject: ${record.subject}`,
+        `MIME-Version: 1.0`,
+        `X-Unsent: 1`,
+        `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
+        ``,
+        `--${mixedBoundary}`,
+        `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+        ``,
+        `--${altBoundary}`,
+        `Content-Type: text/plain; charset=UTF-8`,
+        `Content-Transfer-Encoding: 7bit`,
+        ``,
+        record.plainTextContent || "NDS Technician Schedule",
+        ``,
+        `--${altBoundary}`,
+        `Content-Type: text/html; charset=UTF-8`,
+        `Content-Transfer-Encoding: 7bit`,
+        ``,
+        record.htmlContent,
+        ``,
+        `--${altBoundary}--`,
+      ];
+
+      for (const att of activeAttachments) {
+        if (!att.base64Data) continue;
+        const contentType = att.type || "application/octet-stream";
+        const filename = att.name || "attachment";
+        const formattedBase64 = att.base64Data.match(/.{1,76}/g)?.join("\r\n") || att.base64Data;
+        lines.push(
+          `--${mixedBoundary}`,
+          `Content-Type: ${contentType}; name="${filename}"`,
+          `Content-Disposition: attachment; filename="${filename}"`,
+          `Content-Transfer-Encoding: base64`,
+          ``,
+          formattedBase64
+        );
+      }
+
+      lines.push(`--${mixedBoundary}--`);
+      emlContent = lines.join("\r\n");
+    } else {
+      const boundary = "----=_NextPart_" + Date.now().toString(16);
+      emlContent = [
+        `From: "NDS Dispatch Scheduling" <dispatch@ndsdata.com>`,
+        `To: "${record.cleanTechName}" <technician@ndsdata.com>`,
+        `Subject: ${record.subject}`,
+        `MIME-Version: 1.0`,
+        `Content-Type: multipart/alternative; boundary="${boundary}"`,
+        `X-Unsent: 1`,
+        ``,
+        `--${boundary}`,
+        `Content-Type: text/plain; charset=UTF-8`,
+        `Content-Transfer-Encoding: 7bit`,
+        ``,
+        record.plainTextContent || "NDS Technician Schedule",
+        ``,
+        `--${boundary}`,
+        `Content-Type: text/html; charset=UTF-8`,
+        `Content-Transfer-Encoding: 7bit`,
+        ``,
+        record.htmlContent,
+        ``,
+        `--${boundary}--`,
+      ].join("\r\n");
+    }
 
     const blob = new Blob([emlContent], { type: "message/rfc822" });
     const url = URL.createObjectURL(blob);
@@ -185,6 +257,45 @@ export const EmailViewerModal: React.FC<EmailViewerModalProps> = ({
           <div className="px-6 py-2 bg-yellow-50/80 border-b border-yellow-200 text-xs text-yellow-950 flex items-center space-x-2">
             <span className="font-bold shrink-0">Update Note Recorded:</span>
             <span className="italic">{record.notes}</span>
+          </div>
+        )}
+
+        {/* Stored Attachments Bar if present */}
+        {((record.attachments && record.attachments.length > 0) || (record.brandingConfig?.attachments && record.brandingConfig.attachments.length > 0)) && (
+          <div className="px-6 py-2 bg-blue-50/90 border-b border-blue-200 text-xs text-blue-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center space-x-2 flex-wrap">
+              <span className="font-bold flex items-center space-x-1 text-blue-900">
+                <Paperclip className="w-3.5 h-3.5 text-blue-700" />
+                <span>
+                  Saved Attachments (
+                  {(record.attachments || record.brandingConfig?.attachments || []).length}
+                  ):
+                </span>
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(record.attachments || record.brandingConfig?.attachments || []).map((att) => (
+                  <span
+                    key={att.id}
+                    className="inline-flex items-center space-x-1.5 bg-white border border-blue-200 px-2 py-0.5 rounded text-[11px] font-medium shadow-2xs"
+                  >
+                    <span className="truncate max-w-[160px]">{att.name}</span>
+                    {att.base64Data && (
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadAttachment(att)}
+                        className="text-blue-600 hover:text-blue-900 p-0.5 hover:bg-blue-100 rounded transition cursor-pointer"
+                        title={`Download ${att.name}`}
+                      >
+                        <Download className="w-3 h-3" />
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <span className="text-[11px] text-blue-700 italic shrink-0">
+              Preserved with this version
+            </span>
           </div>
         )}
 
