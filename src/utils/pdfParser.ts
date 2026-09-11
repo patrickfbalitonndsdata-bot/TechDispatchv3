@@ -21,6 +21,15 @@ export interface KmzAttachment {
   rawBase64?: string;
 }
 
+export interface ProjectDetailSection {
+  count: number;
+  studyType: string;
+  rawLine: string;
+  addOns: string;
+  timeRange?: string;
+  locations?: string;
+}
+
 export interface ScannedPdfData {
   id: string;
   fileName: string;
@@ -43,6 +52,7 @@ export interface ScannedPdfData {
   emailSubject: string;
   originalFile?: File;
   originalFileBase64?: string;
+  detailSections?: ProjectDetailSection[];
 }
 
 /**
@@ -86,6 +96,38 @@ export function formatTripleCombinedSubject(
   const addOnsCombined = add1 === add2 ? add1 : `${add1} / ${add2}`;
   const tmcPart = formatTmcSubject(tmcProjectNumber);
   return `${atr1} & ${atr2} ALG ${addOnsCombined} and ${tmcPart}`;
+}
+
+/**
+ * Combines add-ons from multiple project detail sections.
+ * If all sections have identical add-ons (e.g. both are "Volume, Speed"), returns "Volume, Speed".
+ * If there is a discrepancy (e.g. "Volume, Speed" and "Volume, Classification, Speed"),
+ * joins unique add-on strings in order of appearance with "/" separator:
+ * "Volume, Speed/Volume, Classification, Speed"
+ */
+export function combineAddOnsWithDiscrepancy(addOnList: string[]): string {
+  const filtered = addOnList.map((a) => (a || "").trim()).filter(Boolean);
+  if (filtered.length === 0) return "";
+  if (filtered.length === 1) return filtered[0];
+
+  const firstLower = filtered[0].toLowerCase();
+  const allIdentical = filtered.every((a) => a.toLowerCase() === firstLower);
+  if (allIdentical) {
+    return filtered[0];
+  }
+
+  // There is a discrepancy -> deduplicate unique in order of appearance and join with "/"
+  const uniqueInOrder: string[] = [];
+  const seen = new Set<string>();
+  for (const item of filtered) {
+    const key = item.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueInOrder.push(item);
+    }
+  }
+
+  return uniqueInOrder.join("/");
 }
 
 /**
@@ -436,27 +478,145 @@ export function parseFieldsFromPdfText(
     contact = contactMatch[1].trim();
   }
 
-  // 5. Project Details Section extraction
+  // 5. Project Details Section extraction (supporting multiple project detail sections)
   let locationsCount = "1";
   let studyType = "";
   let studyLineRaw = "";
   let addOns = "";
+  let detailSections: ProjectDetailSection[] = [];
 
-  // Regex to capture study pattern: e.g. "60 (24hr) ATR (1 day)" or "19 (24hr) ATR (1 day)" or "4 (4hr) TMC (1 day)"
-  const studyPattern = /(\d+)\s*(?:\([^)]+\)\s*)?(ATR|TMC|VOLUME|SPEED|CLASS[^\s()]*|MIOSPHERE|MIOVISION|PEDS?|BICYCLE|TURNING\s*MOVEMENT)\s*(?:\(([^)]+)\))?/i;
-  const studyLineMatch = normalizedText.match(studyPattern);
+  // Isolate "PROJECT DETAILS" section if present
+  const detailsIdx = normalizedText.search(/PROJECT\s+DETAILS/i);
+  let detailsText = textWithoutRelated;
+  if (detailsIdx !== -1) {
+    const afterDetails = normalizedText.slice(detailsIdx + 15);
+    const endMatch = afterDetails.search(
+      /\b(?:PROJECT\s+ATTACHMENT(?:S)?|SPECIAL\s+INSTRUCTIONS|HISTORICAL\s+PROJECTS|RELATED\s+PROJECTS|ATTACHMENT(?:S)?|EQUIPMENT)\b/i
+    );
+    if (endMatch !== -1) {
+      detailsText = afterDetails.slice(0, endMatch);
+    } else {
+      detailsText = afterDetails;
+    }
+  }
 
-  if (studyLineMatch) {
-    locationsCount = studyLineMatch[1].trim();
-    const typeGroup = studyLineMatch[2].toUpperCase().trim();
-    if (typeGroup.includes("TMC") || typeGroup.includes("TURNING") || typeGroup.includes("MIOVISION") || typeGroup.includes("MIOSPHERE")) {
+  // Regex to match each detail section's start line:
+  // e.g. "3 (48hr) ATR (2 day)" or "2 (72hr) ATR (3 day)" or "60 (24hr) ATR (1 day)" or "4 (4hr) TMC (1 day)"
+  const detailLineRegex = /(?:^|\n)\s*(\d+)\s*(?:\([0-9a-zA-Z\s-]+\)\s*)?(ATR|TMC|VOLUME|SPEED|CLASS[^\s()]*|MIOSPHERE|MIOVISION|PEDS?|BICYCLE|TURNING\s*MOVEMENT)\b([^\n\r]*)/gi;
+
+  interface DetailMatchInfo {
+    count: number;
+    studyType: string;
+    rawLine: string;
+    startIndex: number;
+  }
+
+  let matches: DetailMatchInfo[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = detailLineRegex.exec(detailsText)) !== null) {
+    const count = parseInt(m[1], 10);
+    if (!isNaN(count) && count > 0) {
+      const typeStr = m[2].toUpperCase().trim();
+      const sType = (typeStr.includes("TMC") || typeStr.includes("TURNING") || typeStr.includes("MIOVISION") || typeStr.includes("MIOSPHERE"))
+        ? "TMC"
+        : "ATR";
+      matches.push({
+        count,
+        studyType: sType,
+        rawLine: m[0].trim(),
+        startIndex: m.index,
+      });
+    }
+  }
+
+  // If no matches found in detailsText, try searching across textWithoutRelated
+  if (matches.length === 0) {
+    while ((m = detailLineRegex.exec(textWithoutRelated)) !== null) {
+      const count = parseInt(m[1], 10);
+      if (!isNaN(count) && count > 0) {
+        const typeStr = m[2].toUpperCase().trim();
+        const sType = (typeStr.includes("TMC") || typeStr.includes("TURNING") || typeStr.includes("MIOVISION") || typeStr.includes("MIOSPHERE"))
+          ? "TMC"
+          : "ATR";
+        matches.push({
+          count,
+          studyType: sType,
+          rawLine: m[0].trim(),
+          startIndex: m.index,
+        });
+      }
+    }
+  }
+
+  if (matches.length > 0) {
+    const sourceText = detailsIdx !== -1 && detailsText ? detailsText : textWithoutRelated;
+    for (let i = 0; i < matches.length; i++) {
+      const curr = matches[i];
+      const nextStart = i + 1 < matches.length ? matches[i + 1].startIndex : sourceText.length;
+      const blockText = sourceText.slice(curr.startIndex, nextStart);
+
+      // Extract block Add-ons
+      let blockAddOn = "";
+      const addOnMatch = blockText.match(/w\/\s*([^\n\r]+)/i);
+      if (addOnMatch && addOnMatch[1].trim()) {
+        let cleanAddOn = addOnMatch[1].trim();
+        if (cleanAddOn.includes("|")) {
+          cleanAddOn = cleanAddOn.split("|")[0].trim();
+        }
+        cleanAddOn = cleanAddOn.replace(/\s*(?:TO\s+BE\s+COLLECTED|\*|PROJECT\s+NOTES).*$/i, "").trim();
+        cleanAddOn = cleanAddOn.replace(/^[,;.\s]+|[,;.\s]+$/g, "").trim();
+        blockAddOn = cleanAddOn;
+      } else {
+        const lower = blockText.toLowerCase();
+        if (lower.includes("speed") && (lower.includes("class") || lower.includes("classification"))) {
+          blockAddOn = "Speed & Classification";
+        } else if (lower.includes("speed") && lower.includes("volume")) {
+          blockAddOn = "Volume, Speed";
+        } else if (lower.includes("speed")) {
+          blockAddOn = "Speed";
+        } else if (lower.includes("class") || lower.includes("classification")) {
+          blockAddOn = "Classification";
+        } else if (curr.studyType === "ATR" || lower.includes("volume")) {
+          blockAddOn = "Volume";
+        }
+      }
+
+      // Extract timeRange & location numbers if present
+      const timeRangeMatch = blockText.match(/\d{1,2}:\d{2}-\d{1,2}:\d{2}[^\n\r]*/);
+      const timeRange = timeRangeMatch ? timeRangeMatch[0].trim() : undefined;
+      const locMatch = blockText.match(/Location\(s\)?:\s*([^\n\r]+)/i);
+      const locations = locMatch ? locMatch[1].trim() : undefined;
+
+      detailSections.push({
+        count: curr.count,
+        studyType: curr.studyType,
+        rawLine: curr.rawLine,
+        addOns: blockAddOn,
+        timeRange,
+        locations,
+      });
+    }
+
+    // Sum all location counts: 3 + 2 = 5
+    const totalCount = detailSections.reduce((sum, s) => sum + s.count, 0);
+    locationsCount = String(totalCount);
+
+    // Study type: TMC if all sections are TMC; otherwise ATR
+    const hasTmc = detailSections.some((s) => s.studyType === "TMC");
+    const hasAtr = detailSections.some((s) => s.studyType === "ATR");
+    if (hasTmc && !hasAtr) {
       studyType = "TMC";
     } else {
       studyType = "ATR";
     }
-    studyLineRaw = studyLineMatch[0].trim();
+
+    studyLineRaw = detailSections.map((s) => s.rawLine).join(" & ");
+
+    // Combined add-ons with discrepancy handling:
+    // e.g. "Volume, Speed/Volume, Classification, Speed"
+    addOns = combineAddOnsWithDiscrepancy(detailSections.map((s) => s.addOns));
   } else {
-    // Loose pattern: "60 ATR" or "19 ATR" or "12 TMC"
+    // Loose pattern fallback: "60 ATR" or "19 ATR" or "12 TMC"
     const looseMatch = normalizedText.match(/(\d+)\s+(?:(?:\([^)]+\)\s+)?)(ATR|TMC|MIOSPHERE|MIOVISION)\b/i);
     if (looseMatch) {
       locationsCount = looseMatch[1].trim();
@@ -468,40 +628,50 @@ export function parseFieldsFromPdfText(
         locationsCount = locMatch[1].trim();
       }
     }
-  }
 
-  // Determine studyType if still not resolved
-  if (!studyType) {
-    const textUpper = (normalizedText + " " + fileName).toUpperCase();
-    if (textUpper.includes(" TMC ") || textUpper.includes("TURNING MOVEMENT") || textUpper.includes("TMC APPROVAL")) {
-      studyType = "TMC";
+    // Determine studyType if still not resolved
+    if (!studyType) {
+      const textUpper = (normalizedText + " " + fileName).toUpperCase();
+      if (textUpper.includes(" TMC ") || textUpper.includes("TURNING MOVEMENT") || textUpper.includes("TMC APPROVAL")) {
+        studyType = "TMC";
+      } else {
+        studyType = "ATR";
+      }
+    }
+
+    // 6. Add-ons fallback: look for "w/ <Addons>" (e.g. "w/ Volume, Speed" or "w/ Speed & Classification")
+    const addOnMatch = normalizedText.match(/w\/\s*([^\n\r]+)/i);
+    if (addOnMatch && addOnMatch[1].trim()) {
+      let cleanAddOn = addOnMatch[1].trim();
+      if (cleanAddOn.includes("|")) {
+        cleanAddOn = cleanAddOn.split("|")[0].trim();
+      }
+      cleanAddOn = cleanAddOn.replace(/\s*(?:TO\s+BE\s+COLLECTED|\*|PROJECT\s+NOTES).*$/i, "").trim();
+      cleanAddOn = cleanAddOn.replace(/^[,;.\s]+|[,;.\s]+$/g, "").trim();
+      addOns = cleanAddOn;
     } else {
-      studyType = "ATR";
+      const lower = normalizedText.toLowerCase();
+      if (lower.includes("speed") && (lower.includes("class") || lower.includes("classification"))) {
+        addOns = "Speed & Classification";
+      } else if (lower.includes("speed") && lower.includes("volume")) {
+        addOns = "Volume, Speed";
+      } else if (lower.includes("speed")) {
+        addOns = "Speed";
+      } else if (lower.includes("class") || lower.includes("classification")) {
+        addOns = "Classification";
+      } else if (studyType === "ATR" || lower.includes("volume")) {
+        addOns = "Volume";
+      }
     }
-  }
 
-  // 6. Add-ons: look for "w/ <Addons>" (e.g. "w/ Volume, Speed" or "w/ Speed & Classification")
-  const addOnMatch = normalizedText.match(/w\/\s*([^\n\r]+)/i);
-  if (addOnMatch && addOnMatch[1].trim()) {
-    let cleanAddOn = addOnMatch[1].trim();
-    if (cleanAddOn.includes("|")) {
-      cleanAddOn = cleanAddOn.split("|")[0].trim();
-    }
-    cleanAddOn = cleanAddOn.replace(/\s*(?:TO\s+BE\s+COLLECTED|\*|PROJECT\s+NOTES).*$/i, "").trim();
-    addOns = cleanAddOn;
-  } else {
-    const lower = normalizedText.toLowerCase();
-    if (lower.includes("speed") && (lower.includes("class") || lower.includes("classification"))) {
-      addOns = "Speed & Classification";
-    } else if (lower.includes("speed") && lower.includes("volume")) {
-      addOns = "Volume, Speed";
-    } else if (lower.includes("speed")) {
-      addOns = "Speed";
-    } else if (lower.includes("class") || lower.includes("classification")) {
-      addOns = "Classification";
-    } else if (studyType === "ATR" || lower.includes("volume")) {
-      addOns = "Volume";
-    }
+    detailSections = [
+      {
+        count: parseInt(locationsCount, 10) || 1,
+        studyType,
+        rawLine: studyLineRaw || `${locationsCount} ${studyType}`,
+        addOns,
+      },
+    ];
   }
 
   let fullStudyFormatted = "";
@@ -597,6 +767,7 @@ Study: ${fullStudyFormatted}`;
     emailBodyHtml,
     emailSubject,
     originalFile,
+    detailSections,
   };
 }
 
@@ -749,10 +920,7 @@ export function generateCombinedApprovalEmail(
     const secondAtr = atrPdfs[1] || pdfList[2];
 
     const rawUrgency = tmcPdf?.urgency || priorAtr?.urgency || secondAtr?.urgency || "Priority Client";
-    const urgencyLine = formatUrgencyLine(
-      rawUrgency,
-      scheduleOption === "none" ? "today_next_week" : scheduleOption
-    );
+    const urgencyLine = formatUrgencyLine(rawUrgency, scheduleOption);
 
     const tmcProj = (tmcPdf?.projectNumber || "").trim();
     const tmcLocs = (tmcPdf?.locationsCount || "1").trim();
@@ -830,11 +998,8 @@ Study: ALG ${addOns1} / ${addOns2}`;
   }
 
   const rawUrgency = tmcPdf?.urgency || atrPdf?.urgency || "Priority Client";
-  // Format urgency line with the chosen schedule option (today, next week, today/next week)
-  const urgencyLine = formatUrgencyLine(
-    rawUrgency,
-    scheduleOption === "none" ? "today_next_week" : scheduleOption
-  );
+  // Format urgency line with the chosen schedule option (today, next week, today/next week, or none)
+  const urgencyLine = formatUrgencyLine(rawUrgency, scheduleOption);
 
   const tmcProj = tmcPdf?.projectNumber || "";
   const tmcLocs = tmcPdf?.locationsCount || "1";
@@ -1042,5 +1207,80 @@ Study: ALG Speed & Classification`,
   <p style="margin: 0 0 4px 0;"><strong>Location/s:</strong> 2</p>
   <p style="margin: 0 0 0 0;"><strong>Study:</strong> ALG Speed & Classification</p>
 </div>`.trim(),
+  },
+  {
+    id: "sample-pdf-4",
+    fileName: "26-770125_Multi_Detail_ATR.pdf",
+    rawText: `Colorado
+26-770125 | Fort Collins, CO
+DUE DATE: 9/18/2026 05:00
+HARD DUE DATE:
+URGENCY: Priority Client
+FIRM: Apex Design
+PHONE: (303)555-0199
+CONTACT: Sarah Jenkins
+EMAIL(TO): sjenkins@apexdesign.com
+PROJECT DETAILS
+3 (48hr) ATR (2 day)
+w/ Volume, Speed
+00:00-24:00 | Tue, Wed | 09/15/26 - 09/16/26
+Location(s): 1, 2, 3
+
+2 (72hr) ATR (3 day)
+w/ Volume, Classification, Speed
+00:00-24:00 | Tue/Wed/Thu | 09/15/26 - 09/17/26
+Location(s): 4, 5
+PROJECT ATTACHMENT(S)
+Yes`,
+    projectNumber: "26-770125",
+    urgency: "Priority Client",
+    cityState: "Fort Collins, CO",
+    region: "South Central",
+    locationsCount: "5",
+    studyType: "ATR",
+    studyLineRaw: "3 (48hr) ATR (2 day) & 2 (72hr) ATR (3 day)",
+    addOns: "Volume, Speed/Volume, Classification, Speed",
+    fullStudyFormatted: "ALG Volume, Speed/Volume, Classification, Speed",
+    dueDate: "9/18/2026 05:00",
+    hardDueDate: "",
+    emailSubject: "26-770125 ALG Volume, Speed/Volume, Classification, Speed",
+    emailBodyText: `Hi Nina/Marisa,
+
+Please see ALG conversion attached.
+
+URGENCY: Priority Client – Need to schedule today/next week.
+
+Region: South Central
+Project Number: 26-770125
+Location/s: 5
+Study: ALG Volume, Speed/Volume, Classification, Speed`,
+    emailBodyHtml: `
+<div style="font-family: Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.5;">
+  <p style="margin: 0 0 12px 0;">Hi Nina/Marisa,</p>
+  <p style="margin: 0 0 12px 0;">Please see ALG conversion attached.</p>
+  <p style="margin: 0 0 12px 0;"><span style="background-color: #FFFF00; color: #000000; font-weight: bold; padding: 0 4px; display: inline-block;">URGENCY: Priority Client – Need to schedule today/next week.</span></p>
+  <p style="margin: 0 0 4px 0;"><strong>Region:</strong> South Central</p>
+  <p style="margin: 0 0 4px 0;"><strong>Project Number:</strong> <strong>26-770125</strong></p>
+  <p style="margin: 0 0 4px 0;"><strong>Location/s:</strong> 5</p>
+  <p style="margin: 0 0 0 0;"><strong>Study:</strong> ALG Volume, Speed/Volume, Classification, Speed</p>
+</div>`.trim(),
+    detailSections: [
+      {
+        count: 3,
+        studyType: "ATR",
+        rawLine: "3 (48hr) ATR (2 day)",
+        addOns: "Volume, Speed",
+        timeRange: "00:00-24:00 | Tue, Wed | 09/15/26 - 09/16/26",
+        locations: "1, 2, 3",
+      },
+      {
+        count: 2,
+        studyType: "ATR",
+        rawLine: "2 (72hr) ATR (3 day)",
+        addOns: "Volume, Classification, Speed",
+        timeRange: "00:00-24:00 | Tue/Wed/Thu | 09/15/26 - 09/17/26",
+        locations: "4, 5",
+      },
+    ],
   },
 ];
