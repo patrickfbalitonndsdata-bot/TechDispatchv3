@@ -12,6 +12,7 @@ import {
   Copy,
   Check,
   Eye,
+  Paperclip,
 } from "lucide-react";
 import { GeneratedEmailRecord } from "../utils/generatedEmailStorage";
 import { cleanTechnicianName, copyRichHtmlToClipboard } from "../utils/outlookTemplateGenerator";
@@ -247,6 +248,14 @@ export const GeneratedEmailsHistoryModal: React.FC<GeneratedEmailsHistoryModalPr
                       <span className="bg-zinc-100 text-zinc-700 px-2 py-0.5 rounded text-[10px] font-medium border border-zinc-200">
                         {item.exportMethod}
                       </span>
+                      {((item.attachments && item.attachments.length > 0) || (item.brandingConfig?.attachments && item.brandingConfig.attachments.length > 0)) && (
+                        <span className="inline-flex items-center space-x-1 bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold border border-blue-200" title={`${item.attachments?.length || item.brandingConfig?.attachments?.length} attachment(s) saved in this version`}>
+                          <Paperclip className="w-3 h-3" />
+                          <span>
+                            {(item.attachments?.length || item.brandingConfig?.attachments?.length || 0)}
+                          </span>
+                        </span>
+                      )}
                       {/* Delete Individual Generated Email */}
                       <button
                         type="button"
