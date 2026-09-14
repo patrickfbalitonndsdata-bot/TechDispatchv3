@@ -20,7 +20,7 @@ import {
 import { parseCsvData } from "./utils/csvParser";
 import { DEFAULT_BRANDING, cleanTechnicianName } from "./utils/outlookTemplateGenerator";
 import { SAMPLE_DATASETS, SampleDataset } from "./utils/sampleData";
-import { getStoredGeneratedEmails, GeneratedEmailRecord, LOCAL_STORAGE_KEY_EMAILS } from "./utils/generatedEmailStorage";
+import { getStoredGeneratedEmails, GeneratedEmailRecord, LOCAL_STORAGE_KEY_EMAILS, NDS_SAVED_EMAILS_EVENT } from "./utils/generatedEmailStorage";
 
 import { Navbar } from "./components/Navbar";
 import { CsvUploadZone } from "./components/CsvUploadZone";
@@ -74,8 +74,15 @@ export default function App() {
         refreshSavedCount();
       }
     };
+    const handleCustomUpdate = () => {
+      refreshSavedCount();
+    };
     window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
+    window.addEventListener(NDS_SAVED_EMAILS_EVENT, handleCustomUpdate);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener(NDS_SAVED_EMAILS_EVENT, handleCustomUpdate);
+    };
   }, []);
 
   const loadSampleDataset = (sample: SampleDataset) => {
