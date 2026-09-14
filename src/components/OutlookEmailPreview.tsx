@@ -2784,7 +2784,7 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Clear Preview Button (Red color) */}
+          {/* Clear Preview Button */}
           <button
             type="button"
             onClick={handleClearPreview}
@@ -2793,6 +2793,26 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
           >
             <RotateCcw className="w-3.5 h-3.5 text-white" />
             <span>Clear Preview</span>
+          </button>
+
+          {/* Copy HTML (Outlook) Button */}
+          <button
+            type="button"
+            onClick={handleCopyRichHtml}
+            className="flex items-center space-x-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg border border-emerald-700 shadow-xs transition cursor-pointer"
+            title="Copies the rich HTML formatted email ready to paste directly into Outlook desktop or web"
+          >
+            {copied ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-white" />
+                <span>Copied to Outlook!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5 text-white" />
+                <span>Copy HTML (Outlook)</span>
+              </>
+            )}
           </button>
 
           {/* Manual Save / Mark as Generated (Yellow color) */}
@@ -2808,11 +2828,24 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
 
           {/* Download .EML file / Export Button (Blue color) */}
           <button
+            type="button"
             onClick={handleDownloadEml}
             className="flex items-center space-x-1.5 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg border border-blue-700 shadow-xs transition cursor-pointer"
+            title="Downloads an .EML message file pre-filled with subject, body, and attachments"
           >
             <Download className="w-3.5 h-3.5 text-white" />
             <span>Download Outlook (.EML)</span>
+          </button>
+
+          {/* Open in Outlook 365 Web */}
+          <button
+            type="button"
+            onClick={handleOpenOutlookWeb}
+            className="flex items-center space-x-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-lg border border-indigo-700 shadow-xs transition cursor-pointer"
+            title="Open Outlook Web composer in a new tab"
+          >
+            <ExternalLink className="w-3.5 h-3.5 text-white" />
+            <span>Outlook Web</span>
           </button>
         </div>
       </div>
