@@ -33,7 +33,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <span className="font-semibold text-sm tracking-tight text-zinc-900">TechDispatch</span>
+                <span className="font-semibold text-sm tracking-tight text-zinc-900">Sch TechDispatch (South Central)</span>
                 <span className="text-[10px] font-medium bg-zinc-100 text-zinc-600 px-1.5 py-0.5 rounded border border-zinc-200">
                   Outlook Edition
                 </span>
