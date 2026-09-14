@@ -1,5 +1,5 @@
 {
-  "name": "TechDispatch: Outlook Edition",
+  "name": "Sch TechDispatch (South Central)",
   "description": "Weekly Install & Camera Schedule Generator for Outlook with email formatting, history tracking, and technician roster management.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
