@@ -25,6 +25,7 @@ import {
   clearStoredGeneratedEmailsForTech,
   clearStoredGeneratedEmailsForWorkWeeks,
   LOCAL_STORAGE_KEY_EMAILS,
+  NDS_SAVED_EMAILS_EVENT,
 } from "../utils/generatedEmailStorage";
 import { cleanTechnicianName, copyRichHtmlToClipboard } from "../utils/outlookTemplateGenerator";
 import { EmailViewerModal } from "./EmailViewerModal";
@@ -61,14 +62,23 @@ export const SavedEmailsHistoryTab: React.FC<SavedEmailsHistoryTabProps> = ({
   useEffect(() => {
     loadHistory();
 
-    // Listen for storage events across tabs or local updates
+    // Listen for storage events across tabs
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === LOCAL_STORAGE_KEY_EMAILS) {
         loadHistory();
       }
     };
+    // Listen for in-app updates dispatched in the same window
+    const handleCustomUpdate = () => {
+      loadHistory();
+    };
+
     window.addEventListener("storage", handleStorageChange);
-    return () => window.removeEventListener("storage", handleStorageChange);
+    window.addEventListener(NDS_SAVED_EMAILS_EVENT, handleCustomUpdate);
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener(NDS_SAVED_EMAILS_EVENT, handleCustomUpdate);
+    };
   }, []);
 
   // Unique list of technicians in history
