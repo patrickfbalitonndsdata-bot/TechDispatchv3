@@ -182,34 +182,250 @@ export interface JoinedLadotdNoteInfo {
   unitText: string;
   extraNotes: string;
   originalNote: string;
+  isRedo?: boolean;
+}
+
+/**
+ * Extracts candidate notes text from a work order for joined location parsing.
+ * Excludes Schedule Details, schedulingTeamNotes, duration, and service task info.
+ */
+export function extractAllOrderNotes(ord: WorkOrder): string {
+  const scheduleNotes = (ord.scheduleNotes || "").trim();
+  if (scheduleNotes && !["none", "no", "n/a", "na", "null", "undefined"].includes(scheduleNotes.toLowerCase())) {
+    return scheduleNotes;
+  }
+  const fallback = (ord.specialInstructions || ord.description || "").trim();
+  if (fallback && !["none", "no", "n/a", "na", "null", "undefined"].includes(fallback.toLowerCase())) {
+    return fallback;
+  }
+  if (ord.rawRowData) {
+    for (const [key, val] of Object.entries(ord.rawRowData)) {
+      if (typeof val === "string" && val.trim()) {
+        const kLower = key.toLowerCase();
+        if (
+          kLower.includes("detail") ||
+          kLower.includes("duration") ||
+          kLower.includes("service") ||
+          kLower.includes("time") ||
+          kLower.includes("task")
+        ) {
+          continue;
+        }
+        if (kLower.includes("schedule note") || kLower.includes("location note") || kLower.includes("field note")) {
+          return val.trim();
+        }
+      }
+    }
+  }
+  return "";
+}
+
+/**
+ * Strips unnecessary notes such as Schedule Details, duration/collection windows,
+ * service task info, redundant joined camera/location specs, and REDO markers.
+ */
+export function cleanExtraNotes(
+  text: string,
+  scheduleDetails?: string,
+  schedulingTeamNotes?: string
+): string {
+  if (!text) return "";
+  let clean = text.trim();
+  if (!clean) return "";
+
+  // If identical to scheduleDetails or schedulingTeamNotes, eliminate completely
+  if (scheduleDetails && clean.toLowerCase() === scheduleDetails.trim().toLowerCase()) return "";
+  if (schedulingTeamNotes && clean.toLowerCase() === schedulingTeamNotes.trim().toLowerCase()) return "";
+
+  // Strip explicit scheduleDetails substring if embedded
+  if (scheduleDetails && scheduleDetails.trim()) {
+    const esc = scheduleDetails.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    clean = clean.replace(new RegExp(esc, "gi"), " ");
+  }
+
+  // Strip scheduling details and time/duration patterns e.g. "2 Days: Mon, Tue, Wed, Thu = 00:00-24:00", "24 Hours: ...", "Service task as assigned"
+  clean = clean.replace(/["'“”‘’]?\b\d+\s*Days?[:\s][^()"'\n]*?(?:=\s*\d{1,2}:\d{2}[-\s\d:]*)?["'“”‘’]?/gi, " ");
+  clean = clean.replace(/["'“”‘’]?\b\d+\s*Hours?[:\s][^()"'\n]*?(?:=\s*\d{1,2}:\d{2}[-\s\d:]*)?["'“”‘’]?/gi, " ");
+  clean = clean.replace(/\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)(?:\s*,\s*(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun))*\s*=\s*\d{1,2}:\d{2}[-\s\d:]*/gi, " ");
+  clean = clean.replace(/\b\d{1,2}:\d{2}\s*[-–—]\s*\d{1,2}:\d{2}\b/gi, " ");
+  clean = clean.replace(/Service\s+task\s+as\s+assigned/gi, " ");
+  clean = clean.replace(/Schedule\s+details?/gi, " ");
+  clean = clean.replace(/\b(?:Duration|Time Duration)(?:\s*\(.*?\))?[:\s][^\n,;)]*/gi, " ");
+  clean = clean.replace(/\b\d+-day\s+collection\b/gi, " ");
+  clean = clean.replace(/\bWork\s*Week\s*\d+\b/gi, " ");
+  clean = clean.replace(/\bWW\s*#?\s*\d+\b/gi, " ");
+
+  // Strip redundant camera / unit phrasing e.g. "1 camera for 6893, 6894", "6893, 6894 1 camera", "1 camera", "1 machine"
+  clean = clean.replace(/(?:(?:\d+\s*(?:cameras?|machines?|units?|cams?)\s*(?:for|on|at|between|covering|across|of)?\s*(?:locs?|locations?|loc#?)?[:\s\-–—(]*)?(?:\d{2,6}\s*(?:,|\/|and|&|\s)\s*)+\d{2,6}\)?)/gi, " ");
+  clean = clean.replace(/(?:(?:\d{2,6}\s*(?:,|\/|and|&|\s)\s*)+\d{2,6}\s*[-:,]?\s*\(?\d+\s*(?:cameras?|machines?|units?|cams?)\)?)/gi, " ");
+  clean = clean.replace(/\b\d+\s*(?:cameras?|machines?|units?|cams?)\b/gi, " ");
+  clean = clean.replace(/\b(?:locs?|locations?|loc#?)\s*\d{2,6}\b/gi, " ");
+  clean = clean.replace(/\b\d{3,5}\b/g, " ");
+
+  // Strip REDO tag (handled separately on the bullet)
+  clean = clean.replace(/\bredo\b/gi, " ");
+
+  // Strip City of Dallas list markers
+  clean = clean.replace(/City\s+of\s+Dallas.*?List\s*#?\s*\d+/gi, " ");
+
+  // Clean surrounding punctuation, whitespace, and leftover quotes/brackets
+  clean = clean.replace(/["'“”‘’`]+/g, " ");
+  clean = clean.replace(/^[,\s()\-–—:;[\]]+/, "").replace(/[,\s()\-–—:;[\]]+$/, "").trim();
+  clean = clean.replace(/\s+/g, " ").trim();
+
+  // If the result is a placeholder or meaningless, return empty
+  if (
+    !clean ||
+    ["none", "no", "n/a", "na", "null", "undefined", "()", "( )", "task", "as assigned"].includes(clean.toLowerCase()) ||
+    /^[,\s()\-–—:;[\]]+$/.test(clean)
+  ) {
+    return "";
+  }
+
+  return clean.startsWith("(") && clean.endsWith(")") ? clean : `(${clean})`;
+}
+
+/**
+ * Determines whether an order is marked REDO across flags, raw data, or note text.
+ */
+export function checkOrderIsRedo(ord: WorkOrder): boolean {
+  if (ord.isRedo) return true;
+  if (ord.rawRowData) {
+    for (const [k, v] of Object.entries(ord.rawRowData)) {
+      if (/\bredo\b/i.test(k) && v) {
+        const vLower = String(v).trim().toLowerCase();
+        if (["true", "1", "yes", "y", "x", "redo", "checked", "check", "✓", "t"].includes(vLower)) {
+          return true;
+        }
+      }
+    }
+  }
+  const notes = `${ord.scheduleNotes || ""} ${ord.schedulingTeamNotes || ""} ${ord.specialInstructions || ""} ${ord.description || ""}`;
+  return /\bredo\b/i.test(notes);
 }
 
 /**
  * Parses LADOTD Schedule Notes that specify joined locations with a single equipment count.
- * E.g. "4764, 4765, 4766, 4769 1 camera", "(4555, 4556, 4557 1 camera)", "4555, 4556, 4557 - 2 cameras"
+ * E.g.
+ * - "(1 camera for 6893, 6894)"
+ * - "(1 camera for 6893, 6894) REDO"
+ * - "1 camera for 6893, 6894"
+ * - "6893, 6894 1 camera"
+ * - "(4555, 4556, 4557 1 camera)"
+ * - "Same pole as 6893 (1 camera)"
  */
-export function parseJoinedLadotdNote(notes?: string): JoinedLadotdNoteInfo | null {
+export function parseJoinedLadotdNote(notes?: string, currentLoc?: string): JoinedLadotdNoteInfo | null {
   if (!notes) return null;
   const clean = notes.trim();
+  if (!clean) return null;
 
-  const regex = /(?:^|\(|\b)((?:\d{3,5}\s*(?:,|\/|and|&|\s)\s*)+\d{3,5})\s*[-:,]?\s*\(?(\d+\s*(?:cameras?|machines?|units?|cams?))\)?/i;
-  const match = clean.match(regex);
-  if (match) {
-    const rawLocs = match[1];
-    let unitPart = match[2].trim();
-    unitPart = unitPart.replace(/\bcams\b/i, "cameras").replace(/\bcam\b/i, "camera");
-    const locNumbers = rawLocs.split(/[\s,\/&]+|and/i).filter(Boolean);
-    if (locNumbers.length > 1 && locNumbers.every((n) => /^\d{3,5}$/.test(n))) {
-      const afterMatch = clean.replace(match[0], "").replace(/^[,\s()\-:]+/, "").replace(/[,\s()]+$/, "").trim();
+  const hasRedoInNote = /\bredo\b/i.test(clean);
+
+  const extractExtraNotes = (matchedSubstring: string): string => {
+    const remainder = clean.replace(matchedSubstring, " ").trim();
+    return cleanExtraNotes(remainder);
+  };
+
+  const formatUnit = (countStr: string, unitWord: string): string => {
+    const num = parseInt(countStr, 10) || 1;
+    const isMach = /machine/i.test(unitWord);
+    if (isMach) {
+      return num === 1 ? "1 machine" : `${num} machines`;
+    }
+    return num === 1 ? "1 camera" : `${num} cameras`;
+  };
+
+  // Pattern 1: Unit first, locations second
+  // e.g. "(1 camera for 6893, 6894)", "1 camera for 6893, 6894", "1 camera (6893, 6894)", "1 camera for loc 6893, 6894", "1 camera: 6893, 6894"
+  const p1 = /(?:^|\(|\b)(\d+)\s*(cameras?|machines?|units?|cams?)\s*(?:for|on|at|between|covering|across|of)?\s*(?:locs?|locations?|loc#?)?[:\s\-–—(]+((?:\d{2,6}\s*(?:,|\/|and|&|\s)\s*)+\d{2,6})\)?/i;
+  const m1 = clean.match(p1);
+  if (m1) {
+    const countStr = m1[1];
+    const unitWord = m1[2];
+    const rawLocs = m1[3];
+    const locNumbers = rawLocs.split(/[\s,\/&]+|and/i).map((s) => s.trim()).filter(Boolean);
+    if (locNumbers.length > 1 && locNumbers.every((n) => /^\d{2,6}$/.test(n))) {
+      const sortedLocs = Array.from(new Set(locNumbers)).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
       return {
-        joinedSuffix: locNumbers.join(", "),
-        locNumbers,
-        unitText: unitPart,
-        extraNotes: afterMatch ? `(${afterMatch})` : "",
+        joinedSuffix: sortedLocs.join(", "),
+        locNumbers: sortedLocs,
+        unitText: formatUnit(countStr, unitWord),
+        extraNotes: extractExtraNotes(m1[0]),
         originalNote: clean,
+        isRedo: hasRedoInNote,
       };
     }
   }
+
+  // Pattern 2: Locations first, unit second
+  // e.g. "6893, 6894 1 camera", "(6893, 6894 1 camera)", "6893, 6894 - 1 camera", "6893, 6894 (1 camera)"
+  const p2 = /(?:^|\(|\b)((?:\d{2,6}\s*(?:,|\/|and|&|\s)\s*)+\d{2,6})\s*[-:,]?\s*\(?(\d+)\s*(cameras?|machines?|units?|cams?)\)?/i;
+  const m2 = clean.match(p2);
+  if (m2) {
+    const rawLocs = m2[1];
+    const countStr = m2[2];
+    const unitWord = m2[3];
+    const locNumbers = rawLocs.split(/[\s,\/&]+|and/i).map((s) => s.trim()).filter(Boolean);
+    if (locNumbers.length > 1 && locNumbers.every((n) => /^\d{2,6}$/.test(n))) {
+      const sortedLocs = Array.from(new Set(locNumbers)).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+      return {
+        joinedSuffix: sortedLocs.join(", "),
+        locNumbers: sortedLocs,
+        unitText: formatUnit(countStr, unitWord),
+        extraNotes: extractExtraNotes(m2[0]),
+        originalNote: clean,
+        isRedo: hasRedoInNote,
+      };
+    }
+  }
+
+  // Pattern 3: Explicit joint keywords: "Same pole as 6894", "Joint with 6894", "Combine with 6894", "Shared with 6894"
+  const p3 = /(?:same\s+pole\s+as|joint\s+with|combine\s+with|paired\s+with|shared?\s+with)\s*(?:locs?|locations?|loc#?)?[:\s\-–—(]*(\d{2,6}(?:\s*(?:,|\/|and|&|\s)\s*\d{2,6})*)(?:[,\s\-–—(]*(\d+)\s*(cameras?|machines?|units?|cams?)\)?)?/i;
+  const m3 = clean.match(p3);
+  if (m3) {
+    const rawLocs = m3[1];
+    const countStr = m3[2] || "1";
+    const unitWord = m3[3] || "camera";
+    const mentionedLocs = rawLocs.split(/[\s,\/&]+|and/i).map((s) => s.trim()).filter(Boolean);
+    const locSet = new Set<string>(mentionedLocs);
+    if (currentLoc && /^\d{2,6}$/.test(currentLoc)) {
+      locSet.add(currentLoc);
+    }
+    const locNumbers = Array.from(locSet);
+    if (locNumbers.length > 1 && locNumbers.every((n) => /^\d{2,6}$/.test(n))) {
+      const sortedLocs = locNumbers.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+      return {
+        joinedSuffix: sortedLocs.join(", "),
+        locNumbers: sortedLocs,
+        unitText: formatUnit(countStr, unitWord),
+        extraNotes: extractExtraNotes(m3[0]),
+        originalNote: clean,
+        isRedo: hasRedoInNote,
+      };
+    }
+  }
+
+  // Pattern 4: Fallback for flexible phrasing (e.g. "1 cam 6893 & 6894")
+  const p4 = /(\d+)\s*(cam|camera|machine|unit)s?.*?\b(\d{3,5})\b.*?\b(\d{3,5})\b/i;
+  const m4 = clean.match(p4);
+  if (m4) {
+    const countStr = m4[1];
+    const unitWord = m4[2];
+    const allNums = clean.match(/\b\d{3,5}\b/g) || [];
+    const locNumbers = allNums.filter((n) => n !== countStr);
+    if (locNumbers.length > 1) {
+      const sortedLocs = Array.from(new Set(locNumbers)).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+      return {
+        joinedSuffix: sortedLocs.join(", "),
+        locNumbers: sortedLocs,
+        unitText: formatUnit(countStr, unitWord),
+        extraNotes: extractExtraNotes(m4[0]),
+        originalNote: clean,
+        isRedo: hasRedoInNote,
+      };
+    }
+  }
+
   return null;
 }
 
@@ -230,11 +446,17 @@ export function formatNDSGroupUnitCounts(orders: WorkOrder[], isLadotdActive?: b
 
   if (isLadotdActive) {
     for (const ord of orders) {
-      const noteSrc = ord.scheduleNotes || (ord.rawRowData && ord.rawRowData["Schedule Notes"]) || ord.specialInstructions || ord.description || "";
-      const parsed = parseJoinedLadotdNote(noteSrc);
+      const currentLoc = ord.locationId
+        ? extractLocationSuffix(ord.locationId)
+        : extractLocationSuffix(ord.orderNumber);
+      const noteSrc = extractAllOrderNotes(ord);
+      const parsed = parseJoinedLadotdNote(noteSrc, currentLoc);
       if (parsed) {
         if (parsed.locNumbers.some((n) => coveredSuffixes.has(n))) continue;
-        parsed.locNumbers.forEach((n) => coveredSuffixes.add(n));
+        parsed.locNumbers.forEach((n) => {
+          coveredSuffixes.add(n);
+          coveredSuffixes.add(n.replace(/^0+/, ""));
+        });
 
         const countMatch = parsed.unitText.match(/\d+/);
         const count = countMatch ? parseInt(countMatch[0], 10) : 1;
@@ -251,7 +473,8 @@ export function formatNDSGroupUnitCounts(orders: WorkOrder[], isLadotdActive?: b
     const s = ord.locationId
       ? extractLocationSuffix(ord.locationId)
       : extractLocationSuffix(ord.orderNumber);
-    if (isLadotdActive && s && coveredSuffixes.has(s)) {
+    const cleanS = s ? s.replace(/^0+/, "") : "";
+    if (isLadotdActive && ((s && coveredSuffixes.has(s)) || (cleanS && coveredSuffixes.has(cleanS)))) {
       return;
     }
 
@@ -430,8 +653,15 @@ export function formatBulletItem(order: WorkOrder): FormattedBulletItem {
         `(${trimmedN.toLowerCase()})` === order.schedulingTeamNotes.trim().toLowerCase() ||
         trimmedN.toLowerCase() === `(${order.schedulingTeamNotes.trim().toLowerCase()})`
       );
-      if (!isCod && !isSameAsTeamNotes) {
-        notesText = trimmedN.startsWith("(") && trimmedN.endsWith(")") ? trimmedN : `(${trimmedN})`;
+      // Suppress pure joined location instructions (e.g. (1 camera for 6893, 6894)) from being displayed as a raw note
+      const parsedJoined = parseJoinedLadotdNote(trimmedN);
+      const isPureJoinedNote = Boolean(parsedJoined && !parsedJoined.extraNotes);
+
+      if (!isCod && !isSameAsTeamNotes && !isPureJoinedNote) {
+        const cleaned = cleanExtraNotes(trimmedN, order.scheduleDetails, order.schedulingTeamNotes);
+        if (cleaned) {
+          notesText = cleaned;
+        }
       }
     }
   }
@@ -1788,17 +2018,15 @@ export function formatGroupBullets(
   const coveredJoinedSuffixes = new Set<string>();
   const bullets: FormattedBulletItem[] = [];
 
-  // Map each location number (e.g. "4555", "4556", "4557") to its parsed joined info if present
+  // Map each location number (e.g. "6893", "6894") to its parsed joined info if present
   const joinedInfoByLoc = new Map<string, JoinedLadotdNoteInfo>();
   if (isLadotdActive) {
     for (const ord of group.orders) {
-      const noteSrc =
-        ord.scheduleNotes ||
-        (ord.rawRowData && ord.rawRowData["Schedule Notes"]) ||
-        ord.specialInstructions ||
-        ord.description ||
-        "";
-      const parsed = parseJoinedLadotdNote(noteSrc);
+      const currentLoc = ord.locationId
+        ? extractLocationSuffix(ord.locationId)
+        : extractLocationSuffix(ord.orderNumber);
+      const noteSrc = extractAllOrderNotes(ord);
+      const parsed = parseJoinedLadotdNote(noteSrc, currentLoc);
       if (parsed) {
         for (const num of parsed.locNumbers) {
           const rawNum = num.trim();
@@ -1837,14 +2065,29 @@ export function formatGroupBullets(
       if (cleanS) coveredJoinedSuffixes.add(cleanS);
 
       const isMach = /machine/i.test(joinedParsed.unitText);
+
+      // Check if any order in this joined set is REDO or if the note itself specified REDO
+      const isRedoGroup =
+        Boolean(joinedParsed.isRedo) ||
+        Boolean(ord.isRedo) ||
+        group.orders.some((o) => {
+          const locSuf = o.locationId ? extractLocationSuffix(o.locationId) : extractLocationSuffix(o.orderNumber);
+          const cleanLocSuf = locSuf ? locSuf.replace(/^0+/, "") : "";
+          const isMember =
+            (locSuf && joinedParsed.locNumbers.includes(locSuf)) ||
+            (cleanLocSuf && joinedParsed.locNumbers.includes(cleanLocSuf));
+          if (!isMember) return false;
+          return checkOrderIsRedo(o);
+        });
+
       bullets.push({
         suffix: joinedParsed.joinedSuffix,
         unitText: joinedParsed.unitText,
         isMachine: isMach,
         isManual: false,
         notesText: joinedParsed.extraNotes,
-        isRedo: Boolean(ord.isRedo),
-        fullText: `${joinedParsed.joinedSuffix} ${joinedParsed.unitText}${joinedParsed.extraNotes ? " " + joinedParsed.extraNotes : ""}${ord.isRedo ? " REDO" : ""}`,
+        isRedo: isRedoGroup,
+        fullText: `${joinedParsed.joinedSuffix} ${joinedParsed.unitText}${joinedParsed.extraNotes ? " " + joinedParsed.extraNotes : ""}${isRedoGroup ? " REDO" : ""}`,
       });
     } else {
       // Include every listed location entry in order, regardless of redundant or duplicate location suffixes
@@ -1877,9 +2120,17 @@ export function renderNDSTaskGroupHtml(
   const cityState = o.cityState || o.serviceAddress || "";
   const category = group.category;
 
-  const isLadotdProject = projectNumber === "26-240026" || projectNumber.includes("26-240026");
-  const isLadotdActive = Boolean((branding?.ladotdExclusive ?? ladotdExclusive) && isLadotdProject);
-  const groupUnitCounts = formatNDSGroupUnitCounts(group.orders, isLadotdActive);
+  const isLadotdToggleOn = Boolean(branding?.ladotdExclusive ?? ladotdExclusive);
+  const isLadotdProject =
+    projectNumber === "26-240026" ||
+    projectNumber.includes("240026") ||
+    /240026/i.test(projectNumber) ||
+    /ladot/i.test(projectNumber) ||
+    /ladot/i.test(o.jobType || "") ||
+    /ladot/i.test(o.serviceTypeAddOns || "");
+  const isLadotdActive = Boolean(isLadotdToggleOn && isLadotdProject);
+  const isLadotdJoiningActive = Boolean(isLadotdToggleOn || isLadotdActive);
+  const groupUnitCounts = formatNDSGroupUnitCounts(group.orders, isLadotdJoiningActive);
 
   const isCodExclusiveActive = Boolean(branding?.codExclusive);
   const codKeyword = isCodExclusiveActive ? getCodListForGroup(group.orders) : null;
@@ -1963,7 +2214,7 @@ export function renderNDSTaskGroupHtml(
 
   // Render location bullet points for all locations with a location suffix (e.g. 001, 5666)
   // Formatted with Outlook native bullet semantics (mso-special-format: bullet) and tight line height
-  const validBullets = formatGroupBullets(group, isLadotdActive);
+  const validBullets = formatGroupBullets(group, isLadotdJoiningActive);
 
   // Check for COD Sight Distance requirement locations under Teardowns
   let sightDistanceHtml = "";
@@ -2027,9 +2278,17 @@ export function renderNDSTaskGroupText(
   const cityState = o.cityState || o.serviceAddress || "";
   const category = group.category;
 
-  const isLadotdProject = projectNumber === "26-240026" || projectNumber.includes("26-240026");
-  const isLadotdActive = Boolean((branding?.ladotdExclusive ?? ladotdExclusive) && isLadotdProject);
-  const groupUnitCounts = formatNDSGroupUnitCounts(group.orders, isLadotdActive);
+  const isLadotdToggleOn = Boolean(branding?.ladotdExclusive ?? ladotdExclusive);
+  const isLadotdProject =
+    projectNumber === "26-240026" ||
+    projectNumber.includes("240026") ||
+    /240026/i.test(projectNumber) ||
+    /ladot/i.test(projectNumber) ||
+    /ladot/i.test(o.jobType || "") ||
+    /ladot/i.test(o.serviceTypeAddOns || "");
+  const isLadotdActive = Boolean(isLadotdToggleOn && isLadotdProject);
+  const isLadotdJoiningActive = Boolean(isLadotdToggleOn || isLadotdActive);
+  const groupUnitCounts = formatNDSGroupUnitCounts(group.orders, isLadotdJoiningActive);
 
   const isCodExclusiveActive = Boolean(branding?.codExclusive);
   const codKeyword = isCodExclusiveActive ? getCodListForGroup(group.orders) : null;
@@ -2096,7 +2355,7 @@ export function renderNDSTaskGroupText(
     }
   }
 
-  const validBullets = formatGroupBullets(group, isLadotdActive);
+  const validBullets = formatGroupBullets(group, isLadotdJoiningActive);
 
   if (validBullets.length > 0) {
     const bulletLines = validBullets.map((b) => {
