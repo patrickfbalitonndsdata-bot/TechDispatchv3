@@ -141,7 +141,12 @@ export function formatUrgencyLine(
   urgency: string,
   scheduleOption: UrgencyScheduleOption = "today_next_week"
 ): string {
-  const cleanUrgency = (urgency || "Priority Client").trim();
+  let cleanUrgency = (urgency || "Priority Client").trim();
+  // Strip any existing "- Need to schedule..." suffix so toggles switch cleanly
+  cleanUrgency = cleanUrgency.replace(/\s*[-–—:]\s*Need\s+to\s+schedule.*$/i, "").trim();
+  cleanUrgency = cleanUrgency.replace(/\s*Need\s+to\s+schedule.*$/i, "").trim();
+  if (!cleanUrgency) cleanUrgency = "Priority Client";
+
   switch (scheduleOption) {
     case "today":
       return `URGENCY: ${cleanUrgency} - Need to schedule today`;
@@ -444,7 +449,10 @@ export function parseFieldsFromPdfText(
   let urgency = "Priority Client";
   const urgencyMatch = normalizedText.match(/URGENCY:\s*([^\n,;|]+)/i);
   if (urgencyMatch && urgencyMatch[1].trim()) {
-    urgency = urgencyMatch[1].trim();
+    let rawUrg = urgencyMatch[1].trim();
+    rawUrg = rawUrg.replace(/\s*[-–—:]\s*Need\s+to\s+schedule.*$/i, "").trim();
+    rawUrg = rawUrg.replace(/\s*Need\s+to\s+schedule.*$/i, "").trim();
+    urgency = rawUrg || "Priority Client";
   }
 
   // 3. City / State / Region
