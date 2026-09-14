@@ -73,8 +73,71 @@ export function getStoredGeneratedEmails(): GeneratedEmailRecord[] {
   return [];
 }
 
+export const NDS_SAVED_EMAILS_EVENT = "nds-saved-emails-updated";
+
 /**
- * Saves a new generated email record into localStorage.
+ * Dispatches custom update event to synchronize all open components within the same window
+ */
+function notifyEmailsUpdated(records: GeneratedEmailRecord[]) {
+  if (typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new CustomEvent(NDS_SAVED_EMAILS_EVENT, { detail: records }));
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Quota-resilient localStorage writer that protects against browser 5MB storage overflows
+ */
+function safeSetStoredEmails(updated: GeneratedEmailRecord[]): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY_EMAILS, JSON.stringify(updated));
+    notifyEmailsUpdated(updated);
+    return true;
+  } catch (err) {
+    console.warn("localStorage setItem hit quota limits, applying adaptive pruning...", err);
+    try {
+      // Pruning Tier 1: Remove heavy HTML from records beyond the top 8 (preserve plaintext)
+      const tier1 = updated.map((rec, idx) => {
+        if (idx >= 8 && rec.htmlContent) {
+          return {
+            ...rec,
+            htmlContent: `<div style="font-family: Calibri, sans-serif; white-space: pre-wrap;">${rec.plainTextContent || "Email Content"}</div>`,
+          };
+        }
+        return rec;
+      });
+      localStorage.setItem(LOCAL_STORAGE_KEY_EMAILS, JSON.stringify(tier1));
+      notifyEmailsUpdated(tier1);
+      return true;
+    } catch {
+      try {
+        // Pruning Tier 2: Limit history to most recent 30 items
+        const tier2 = updated.slice(0, 30).map((rec, idx) => {
+          if (idx >= 3 && rec.htmlContent) {
+            return {
+              ...rec,
+              htmlContent: `<div style="font-family: Calibri, sans-serif; white-space: pre-wrap;">${rec.plainTextContent || "Email Content"}</div>`,
+            };
+          }
+          return rec;
+        });
+        localStorage.setItem(LOCAL_STORAGE_KEY_EMAILS, JSON.stringify(tier2));
+        notifyEmailsUpdated(tier2);
+        return true;
+      } catch (finalErr) {
+        console.error("Critical: unable to persist generated emails history to localStorage", finalErr);
+        return false;
+      }
+    }
+  }
+}
+
+/**
+ * Saves a new generated email record into localStorage safely.
  */
 export function saveStoredGeneratedEmail(
   record: Omit<GeneratedEmailRecord, "id" | "timestamp" | "dateFormatted" | "cleanTechName" | "workWeekKey">
@@ -83,8 +146,32 @@ export function saveStoredGeneratedEmail(
   const workWeekKey = buildWorkWeekKey(cleanTech, record.workWeek);
   const now = new Date();
 
+  // Strip massive base64 payload strings from attachments to guarantee localStorage safety
+  const sanitizedAttachments = record.attachments?.map((att, idx) => ({
+    id: att.id || `att-${idx}-${att.name}`,
+    name: att.name,
+    size: att.size,
+    type: att.type,
+    base64Data: undefined,
+  }));
+
+  const sanitizedBrandingConfig = record.brandingConfig
+    ? {
+        ...record.brandingConfig,
+        attachments: record.brandingConfig.attachments?.map((att, idx) => ({
+          id: att.id || `att-${idx}-${att.name}`,
+          name: att.name,
+          size: att.size,
+          type: att.type,
+          base64Data: undefined,
+        })),
+      }
+    : undefined;
+
   const fullRecord: GeneratedEmailRecord = {
     ...record,
+    attachments: sanitizedAttachments,
+    brandingConfig: sanitizedBrandingConfig,
     id: `email-gen-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     cleanTechName: cleanTech,
     workWeekKey,
@@ -99,26 +186,25 @@ export function saveStoredGeneratedEmail(
   };
 
   const existing = getStoredGeneratedEmails();
-  // Prevent exact duplicates generated within 3 seconds for the same subject & method
-  const isDuplicate = existing.some(
+  // Check if an entry with the exact same work week and export method was generated in the last 4 seconds
+  const dupIndex = existing.findIndex(
     (e) =>
       e.workWeekKey === workWeekKey &&
-      e.subject === record.subject &&
       e.exportMethod === record.exportMethod &&
-      Math.abs(new Date(e.timestamp).getTime() - now.getTime()) < 3000
+      Math.abs(new Date(e.timestamp).getTime() - now.getTime()) < 4000
   );
 
-  if (!isDuplicate) {
-    const updated = [fullRecord, ...existing];
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY_EMAILS, JSON.stringify(updated));
-    } catch (err) {
-      console.warn("Failed to save generated email to localStorage", err);
-    }
-    return fullRecord;
+  let updated: GeneratedEmailRecord[];
+  if (dupIndex !== -1) {
+    // Update the existing item with the latest preview content
+    updated = [...existing];
+    updated[dupIndex] = { ...fullRecord, id: existing[dupIndex].id };
+  } else {
+    updated = [fullRecord, ...existing];
   }
 
-  return existing.find((e) => e.workWeekKey === workWeekKey) || fullRecord;
+  safeSetStoredEmails(updated);
+  return fullRecord;
 }
 
 /**
@@ -127,11 +213,7 @@ export function saveStoredGeneratedEmail(
 export function deleteStoredGeneratedEmail(id: string): GeneratedEmailRecord[] {
   const existing = getStoredGeneratedEmails();
   const updated = existing.filter((e) => e.id !== id);
-  try {
-    localStorage.setItem(LOCAL_STORAGE_KEY_EMAILS, JSON.stringify(updated));
-  } catch (err) {
-    console.warn("Failed to delete generated email from localStorage", err);
-  }
+  safeSetStoredEmails(updated);
   return updated;
 }
 
@@ -158,11 +240,7 @@ export function clearStoredGeneratedEmailsForTech(
     return false;
   });
 
-  try {
-    localStorage.setItem(LOCAL_STORAGE_KEY_EMAILS, JSON.stringify(updated));
-  } catch (err) {
-    console.warn("Failed to clear technician generated emails from localStorage", err);
-  }
+  safeSetStoredEmails(updated);
   return updated;
 }
 
@@ -184,7 +262,6 @@ export function clearStoredGeneratedEmailsForWorkWeeks(
     if (!matchesWeek) return true; // keep
 
     if (cleanTech) {
-      // only delete if tech matches
       const eClean = cleanTechnicianName(e.cleanTechName).toLowerCase();
       const eRaw = (e.technicianName || "").toLowerCase().trim();
       const matchesTech =
@@ -201,11 +278,7 @@ export function clearStoredGeneratedEmailsForWorkWeeks(
     return false; // delete across all techs
   });
 
-  try {
-    localStorage.setItem(LOCAL_STORAGE_KEY_EMAILS, JSON.stringify(updated));
-  } catch (err) {
-    console.warn("Failed to clear work weeks from localStorage", err);
-  }
+  safeSetStoredEmails(updated);
   return updated;
 }
 
