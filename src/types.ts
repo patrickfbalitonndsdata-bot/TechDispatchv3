@@ -159,6 +159,7 @@ export interface TemplateBranding {
   emailUpdatesEnabled?: boolean;
   updateVersion?: number | string;
   updateNotes?: string;
+  manualPriorVersionsEnabled?: boolean;
   previousUpdateNotes?: Array<{ version: number | string; notes: string; text?: string }>;
   // Additional Notes Feature (Green Bold Italic notes per day)
   additionalNotesEnabled?: boolean;
