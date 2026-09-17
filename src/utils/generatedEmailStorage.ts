@@ -26,6 +26,7 @@ export interface GeneratedEmailRecord {
     emailUpdatesEnabled?: boolean;
     updateVersion?: number | string;
     updateNotes?: string;
+    manualPriorVersionsEnabled?: boolean;
     previousUpdateNotes?: Array<{ version: number | string; notes: string; text?: string }>;
     sundaySundayEnabled?: boolean;
     overlappingSchedulesEnabled?: boolean;
