@@ -1221,12 +1221,34 @@ export function getOrderScheduleSequence(ord: WorkOrder): number {
 export function groupDayOrdersByProject(
   dayOrders: WorkOrder[],
   useAnytime?: boolean,
-  codExclusive?: boolean
+  codExclusive?: boolean,
+  conductStudyEnabled?: boolean,
+  knownConductStudyProjects?: Set<string>
 ): GroupedProjectTask[] {
+  // Collect all Conduct Study project numbers if Conduct Study is enabled
+  const conductStudyProjects = new Set<string>(knownConductStudyProjects ? Array.from(knownConductStudyProjects) : []);
+  if (conductStudyEnabled) {
+    dayOrders.forEach((o) => {
+      if (getStudyInfo(o)) {
+        const pNum = o.projectNumber || (o.locationId ? extractProjectNumber(o.locationId) : extractProjectNumber(o.orderNumber));
+        if (pNum) conductStudyProjects.add(pNum.trim());
+      }
+    });
+  }
+
   // Separate day orders by category
   const installOrders = dayOrders.filter((o) => (o.taskCategory || "Install") === "Install");
   const batterySwapOrders = dayOrders.filter((o) => o.taskCategory === "BatterySwap");
-  const teardownOrders = dayOrders.filter((o) => o.taskCategory === "Teardown");
+  const teardownOrders = dayOrders.filter((o) => {
+    if (o.taskCategory !== "Teardown") return false;
+    // When Conduct Study is enabled, completely remove and disregard teardowns for Conduct Study converted project numbers
+    if (conductStudyEnabled) {
+      if (getStudyInfo(o)) return false;
+      const pNum = o.projectNumber || (o.locationId ? extractProjectNumber(o.locationId) : extractProjectNumber(o.orderNumber));
+      if (pNum && conductStudyProjects.has(pNum.trim())) return false;
+    }
+    return true;
+  });
 
   // 1. INSTALLS: Sort strictly by Schedule Order
   installOrders.sort((a, b) => {
@@ -1788,7 +1810,7 @@ export function getStudyInfo(order: WorkOrder): {
   headerText: string;
   durationText: string;
 } | null {
-  const combined = `${order.jobType || ""} ${order.serviceTypeAddOns || ""} ${order.description || ""} ${order.scheduleNotes || ""} ${order.rawRowData?.["Service Types (from Project ID) (from Locations)"] || ""} ${order.rawRowData?.["Service Type"] || ""} ${order.rawRowData?.["Service Type Add Ons"] || ""} ${order.rawRowData?.["Study"] || ""}`.toLowerCase();
+  const combined = `${order.jobType || ""} ${order.serviceTypeAddOns || ""} ${order.description || ""} ${order.scheduleNotes || ""} ${order.schedulingTeamNotes || ""} ${order.scheduleDetails || ""} ${order.specialInstructions || ""} ${order.rawRowData?.["Service Types (from Project ID) (from Locations)"] || ""} ${order.rawRowData?.["Service Type"] || ""} ${order.rawRowData?.["Service Type Add Ons"] || ""} ${order.rawRowData?.["Study"] || ""}`.toLowerCase();
 
   const durationRange = extractStudyTimeRange(order);
 
@@ -1813,6 +1835,29 @@ export function getStudyInfo(order: WorkOrder): {
   }
 
   return null;
+}
+
+/**
+ * Returns true if an individual work order is a Conduct Study (Radar / Spot Speed / Parking)
+ */
+export function isConductStudyOrder(order: WorkOrder): boolean {
+  return Boolean(getStudyInfo(order));
+}
+
+/**
+ * Returns a set of project numbers that are Conduct Study projects within a list of orders
+ */
+export function getConductStudyProjectNumbers(orders: WorkOrder[]): Set<string> {
+  const set = new Set<string>();
+  orders.forEach((o) => {
+    if (getStudyInfo(o)) {
+      const pNum = o.projectNumber || (o.locationId ? extractProjectNumber(o.locationId) : extractProjectNumber(o.orderNumber));
+      if (pNum) {
+        set.add(pNum.trim());
+      }
+    }
+  });
+  return set;
 }
 
 /**
@@ -2198,6 +2243,10 @@ export function renderNDSTaskGroupHtml(
         <span style="background-color: #00FFFF; color: #000000; font-weight: bold; font-style: italic; padding: 0 4px; display: inline-block;">SD Card and Battery Swaps:</span> <span style="color: #FF0000; font-weight: bold; font-style: italic;">Upload Data</span> <strong style="color: #000000;">${formattedHtml}${locationOrNotesPart}${camPart}</strong>${collectionBadge} <span style="color: #000000; font-weight: normal; font-style: italic;">(Check if cameras are still working, tampered, etc., replace / adjust / swap if necessary.)</span>
       </div>`;
     } else if (category === "Teardown") {
+      // Disregard and remove teardowns for Conduct Study converted projects
+      if (branding?.conductStudyEnabled && (studyInfo || getStudyInfo(o) || (group.orders && group.orders.some((ord) => getStudyInfo(ord))))) {
+        return "";
+      }
       const teardownNotes = formatNDSTeardownNote(o, daySection, useAnytime ?? branding?.useAnytimeTeardowns);
       mainLine = `
       <div style="margin: 0 0 8px 0; font-family: Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt; mso-ansi-font-size: 11.0pt; mso-bidi-font-size: 11.0pt; line-height: 1.5; color: #000000; font-weight: bold;">
@@ -2335,6 +2384,10 @@ export function renderNDSTaskGroupText(
     } else if (category === "BatterySwap") {
       mainLine = `SD Card and Battery Swaps: Upload Data ${formattedText}${locationOrNotesPart}${camPart} ${collectionInfo.collectionText} (Check if cameras are still working, tampered, etc., replace / adjust / swap if necessary.)`;
     } else if (category === "Teardown") {
+      // Disregard and remove teardowns for Conduct Study converted projects
+      if (branding?.conductStudyEnabled && (studyInfo || getStudyInfo(o) || (group.orders && group.orders.some((ord) => getStudyInfo(ord))))) {
+        return "";
+      }
       const teardownNotes = formatNDSTeardownNote(o, daySection, useAnytime ?? branding?.useAnytimeTeardowns);
       mainLine = `Teardowns: Upload Data ${formattedText}${locationOrNotesPart}${camPart}${multiDayCollectionText} ${teardownNotes}`;
     } else {
@@ -2393,23 +2446,58 @@ export function buildDayScheduleItems(
   dayKey: string,
   baseDayName: string,
   dayOrders: WorkOrder[],
-  branding: TemplateBranding = DEFAULT_BRANDING
+  branding: TemplateBranding = DEFAULT_BRANDING,
+  roster?: TechnicianRoster
 ): RenderableScheduleItem[] {
   const items: RenderableScheduleItem[] = [];
 
   // 1. Task Groups
   if (dayOrders.length > 0) {
+    // Collect all Conduct Study project numbers if Conduct Study is enabled
+    const conductStudyProjects = new Set<string>();
+    if (branding.conductStudyEnabled) {
+      dayOrders.forEach((o) => {
+        if (getStudyInfo(o)) {
+          const pNum = o.projectNumber || (o.locationId ? extractProjectNumber(o.locationId) : extractProjectNumber(o.orderNumber));
+          if (pNum) conductStudyProjects.add(pNum.trim());
+        }
+      });
+      if (roster?.orders) {
+        roster.orders.forEach((o) => {
+          if (getStudyInfo(o)) {
+            const pNum = o.projectNumber || (o.locationId ? extractProjectNumber(o.locationId) : extractProjectNumber(o.orderNumber));
+            if (pNum) conductStudyProjects.add(pNum.trim());
+          }
+        });
+      }
+    }
+
     const projectGroups = groupDayOrdersByProject(
       dayOrders,
       branding.useAnytimeTeardowns,
-      branding.codExclusive
+      branding.codExclusive,
+      branding.conductStudyEnabled,
+      conductStudyProjects
     );
     projectGroups.forEach((g, idx) => {
+      const pNum = g.projectNumber || g.primaryOrder.projectNumber || "";
+
+      // Disregard and remove any Teardown lines for Conduct Study converted Project numbers
+      if (branding.conductStudyEnabled && g.category === "Teardown") {
+        const isConductStudyTeardown = Boolean(
+          getStudyInfo(g.primaryOrder) ||
+          g.orders.some((ord) => getStudyInfo(ord)) ||
+          (pNum && conductStudyProjects.has(pNum.trim()))
+        );
+        if (isConductStudyTeardown) {
+          return; // Disregard/remove this teardown group completely
+        }
+      }
+
       const studyInfo = branding.conductStudyEnabled ? getStudyInfo(g.primaryOrder) : null;
       const isConductStudy = Boolean(studyInfo && g.category === "Install");
       const catName = isConductStudy ? "ConductStudy" : g.category;
 
-      const pNum = g.projectNumber || g.primaryOrder.projectNumber || "";
       const itemId = `task-${g.category.toLowerCase()}-${pNum || idx}-${g.primaryOrder.id || idx}`;
 
       const html = renderNDSTaskGroupHtml(
@@ -2426,6 +2514,11 @@ export function buildDayScheduleItems(
         branding.ladotdExclusive,
         branding
       );
+
+      // If rendering resulted in empty text (e.g. suppressed teardown), do not add
+      if (!html.trim() && !text.trim()) {
+        return;
+      }
 
       items.push({
         id: itemId,
@@ -2780,6 +2873,57 @@ Capture one direction of traffic only. 2 lanes recommended; 3 lanes require appr
 Securely fasten the camera pole to prevent tilting/shaking, which can affect speed-data accuracy.
 For any camera setup concerns, coordinate with OPS.`;
 
+export const RADAR_STUDY_NOTE =
+  `NOTE: 100 samples total, or 2hr max per interval (whichever comes first)
+
+  Be made on average weekdays at off-peak hours. Be made under favorable weather conditions. Include only “free floating” vehicles Include a minimum of 100 cars in each direction at each station.
+
+  The vehicles checked should be only those in which drivers are choosing their own speed (“free floating”). When a line of vehicles moving closely behind each other passes the speed check station, only the speed of the first vehicle should be checked, since the other drivers may not be choosing their own speed. Cars involved in passing or turning maneuvers should not be checked, because they are probably driving at an abnormal rate of speed. Trucks and busses should be recorded separately and should not be included as part of the 100-car total.
+
+  Be discontinued after two hours if radar is used, or after four hours if a traffic counter that classifies vehicles by type is used — even if 100 cars have not been timed.
+
+NOTE: Use attached Radar Template`;
+
+/**
+ * Checks if a note string represents the Radar Study instructional preset
+ */
+export function isRadarStudyNote(text: string): boolean {
+  if (!text) return false;
+  return (
+    (/100 samples total/i.test(text) || /2hr max per interval/i.test(text)) &&
+    (/free floating/i.test(text) || /radar template/i.test(text) || /speed check station/i.test(text) || /radar/i.test(text))
+  ) || (/radar study/i.test(text) && /100 cars/i.test(text));
+}
+
+/**
+ * Formats the Radar Study note for Outlook HTML with precise styling:
+ * - Green (#00FF00) background for general requirements and "NOTE:" statements
+ * - Yellow (#FFFF00) background for "The vehicles checked should be only those..."
+ * - Indentation for the 3 sub-rules, flush-left for NOTE: lines
+ * - All in bold, italic Calibri font
+ */
+export function renderRadarStudyNoteHtml(noteText: string): string {
+  const rawParagraphs = noteText.split(/\r?\n\s*\r?\n/).map((p) => p.trim()).filter(Boolean);
+  const paragraphs = rawParagraphs.length > 1 ? rawParagraphs : noteText.split(/\r?\n/).map((p) => p.trim()).filter(Boolean);
+
+  return `
+  <div style="margin: 4px 0 6px 0; font-family: Calibri, 'Segoe UI', Arial, sans-serif; font-size: 12pt; mso-ansi-font-size: 12.0pt; mso-bidi-font-size: 12.0pt; line-height: 1.4;">
+    ${paragraphs
+      .map((para) => {
+        // Paragraph 3 has yellow highlight: "The vehicles checked should be only those..."
+        const isYellow = /vehicles checked|choosing their own speed|abnormal rate of speed/i.test(para);
+        // Paragraphs starting with "NOTE:" are flush left; other requirement clauses are indented
+        const isIndented = !/^note\s*:/i.test(para);
+        const bgColor = isYellow ? "#FFFF00" : "#00FF00";
+        const margin = isIndented ? "margin: 4px 0 4px 28px;" : "margin: 4px 0;";
+        return `<div style="${margin}">
+      <span style="background-color: ${bgColor}; mso-highlight: ${bgColor}; color: #000000; font-weight: bold; font-style: italic; display: inline-block; padding: 1px 4px;">${escapeHtml(para)}</span>
+    </div>`;
+      })
+      .join("")}
+  </div>`;
+}
+
 /**
  * Checks if an order or project has "Speed" in Service Type Add Ons (or any add-on column/field)
  */
@@ -3053,6 +3197,11 @@ function escapeHtml(str: string): string {
 export function renderNDSNoteHtml(noteText: string): string {
   const formatted = formatNoteTextWithPrefix(noteText);
 
+  // Check if this note is the RADAR STUDY note (Green & Yellow highlights per photo)
+  if (isRadarStudyNote(formatted) || isRadarStudyNote(noteText)) {
+    return renderRadarStudyNoteHtml(noteText);
+  }
+
   // Check if this note contains "See correct Format:" or "Example:" (SPEED Teardown note)
   if (/See correct Format\s*:/i.test(formatted)) {
     const splitIndex = formatted.search(/See correct Format\s*:/i);
@@ -3261,7 +3410,7 @@ export function generateOutlookHtml(
       .map((def) => {
         const dayOrders = groupedOrders[def.key] || [];
         const dayNotes = getAdditionalNotesForDay(def.key, def.baseDayName, branding, roster);
-        const dayItems = buildDayScheduleItems(def.key, def.baseDayName, dayOrders, branding);
+        const dayItems = buildDayScheduleItems(def.key, def.baseDayName, dayOrders, branding, roster);
         let dayBody = "";
 
         if (dayItems.length > 0) {
@@ -4032,7 +4181,7 @@ export function generatePlainTextEmail(roster: TechnicianRoster, branding: Templ
       lines.push(""); // 1-line space separator after Notes
     }
     const dayOrders = groupedOrders[def.key] || [];
-    const dayItems = buildDayScheduleItems(def.key, def.baseDayName, dayOrders, branding);
+    const dayItems = buildDayScheduleItems(def.key, def.baseDayName, dayOrders, branding, roster);
     if (dayItems.length > 0) {
       dayItems.forEach((it) => {
         lines.push(it.text);
