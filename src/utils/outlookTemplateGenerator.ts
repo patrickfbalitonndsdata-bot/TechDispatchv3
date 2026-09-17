@@ -51,6 +51,8 @@ export const DEFAULT_BRANDING: TemplateBranding = {
   emailUpdatesEnabled: false,
   updateVersion: 1,
   updateNotes: "",
+  manualPriorVersionsEnabled: false,
+  previousUpdateNotes: [],
   additionalNotesEnabled: false,
   additionalNotes: [],
   sundaySundayEnabled: false,
@@ -3250,6 +3252,16 @@ export function resolveStackedPreviousUpdateNotes(
   branding: TemplateBranding,
   roster?: TechnicianRoster
 ): Array<{ version: number | string; notes: string; text?: string }> {
+  // If manual prior versions input is explicitly enabled by the user, strictly use manual notes
+  if (branding.manualPriorVersionsEnabled) {
+    if (branding.previousUpdateNotes && branding.previousUpdateNotes.length > 0) {
+      return branding.previousUpdateNotes.filter(
+        (p) => (p.notes !== undefined && p.notes.trim().length > 0) || (p.text !== undefined && p.text.trim().length > 0)
+      );
+    }
+    return [];
+  }
+
   // If explicitly configured in branding, use those
   if (branding.previousUpdateNotes && branding.previousUpdateNotes.length > 0) {
     return branding.previousUpdateNotes.filter(
