@@ -91,7 +91,6 @@ import {
   getRecommendedUpdateVersion,
   getStoredPreviousUpdateNotes,
   getStoredInitialEmailLinks,
-  getMostRecentPriorAttachments,
   extractVersionNumber,
   extractRecordVersionNumber,
   getMostRecentSavedEmail,
@@ -196,6 +195,8 @@ interface OutlookEmailPreviewProps {
   onToggleCodExclusive?: (val: boolean) => void;
   onToggleEmailUpdates?: (val: boolean) => void;
   onUpdateEmailUpdateDetails?: (version: number | string, notes: string) => void;
+  onToggleManualPriorVersions?: (val: boolean) => void;
+  onUpdateManualPriorVersions?: (notes: Array<{ version: number | string; notes: string; text?: string }>) => void;
   onToggleAdditionalNotes?: (val: boolean) => void;
   onUpdateAdditionalNotes?: (notes: Array<{ id: string; day: string; text: string }>) => void;
   onToggleSundaySunday?: (val: boolean) => void;
@@ -219,6 +220,8 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
   onToggleCodExclusive,
   onToggleEmailUpdates,
   onUpdateEmailUpdateDetails,
+  onToggleManualPriorVersions,
+  onUpdateManualPriorVersions,
   onToggleAdditionalNotes,
   onUpdateAdditionalNotes,
   onToggleSundaySunday,
@@ -333,65 +336,19 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
     }
   };
 
-  // Track details if current attachments were inherited from a prior version in saved history
-  const [inheritedAttachmentInfo, setInheritedAttachmentInfo] = useState<{
-    sourceVersion: string | number;
-    count: number;
-    sourceSubject?: string;
-  } | null>(null);
-
-  /**
-   * Fetches attachments from the most recent prior email in saved history for this technician and work week.
-   * Strictly fetches attachments from the immediate prior version (e.g. for v3, fetches from v2; not v1 or initial).
-   */
-  const fetchRecentEmailAttachments = (targetIncomingVersion?: number | string, notify: boolean = true) => {
-    const versionToUse = targetIncomingVersion !== undefined ? targetIncomingVersion : (branding.updateVersion || 1);
-    const result = getMostRecentPriorAttachments(
-      roster.technicianName,
-      weekInfo.formattedRange,
-      versionToUse
-    );
-
-    if (result.attachments && result.attachments.length > 0) {
-      updateAttachments(result.attachments);
-      const verLabel = result.sourceVersion !== undefined && result.sourceVersion !== null
-        ? (String(result.sourceVersion).toLowerCase().startsWith("v") || String(result.sourceVersion).toLowerCase().startsWith("update")
-            ? String(result.sourceVersion)
-            : `v${result.sourceVersion}`)
-        : "recent email";
-      setInheritedAttachmentInfo({
-        sourceVersion: verLabel,
-        count: result.attachments.length,
-        sourceSubject: result.sourceSubject,
-      });
-      if (notify) {
-        setPresetFeedback(`Fetched ${result.attachments.length} attachment(s) from ${verLabel} (Saved History)!`);
-        setTimeout(() => setPresetFeedback(null), 3500);
-      }
-      return result.attachments;
-    } else {
-      setInheritedAttachmentInfo(null);
-      if (notify) {
-        const prevVerNum = extractVersionNumber(versionToUse) > 0 ? extractVersionNumber(versionToUse) - 1 : 0;
-        const prevLabel = prevVerNum === 0 ? "Initial (v0)" : `v${prevVerNum}`;
-        setPresetFeedback(`No attachments found in prior email (${prevLabel}) for ${cleanTechnicianName(roster.technicianName)}.`);
-        setTimeout(() => setPresetFeedback(null), 3500);
-      }
-      return [];
-    }
-  };
-
   const handleToggleEmailUpdates = (nextVal: boolean) => {
     if (onToggleEmailUpdates) {
       onToggleEmailUpdates(nextVal);
     } else if (onUpdateBranding) {
-      onUpdateBranding({ emailUpdatesEnabled: nextVal });
+      onUpdateBranding({
+        emailUpdatesEnabled: nextVal,
+        manualPriorVersionsEnabled: nextVal ? branding.manualPriorVersionsEnabled : false,
+      });
     }
 
     if (nextVal) {
       // When Email Updates is toggled ON, follow the version from the recent saved history
       // e.g. If the recent saved email is tagged v1, the newly generated will automatically become v2
-      // even if the historical email has been a manually edited version.
       const rec = getRecommendedUpdateVersion(roster.technicianName, weekInfo.formattedRange);
       const targetVersion = rec.count > 0 ? rec.recommendedVersion : (branding.updateVersion || 1);
 
@@ -400,23 +357,166 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
       } else if (onUpdateBranding) {
         onUpdateBranding({ emailUpdatesEnabled: true, updateVersion: targetVersion });
       }
-
-      // Automatically fetch attachments from the most recent prior email (targetVersion - 1)
-      fetchRecentEmailAttachments(targetVersion, true);
     }
+  };
+
+  const handleToggleManualPriorVersions = (nextVal: boolean) => {
+    if (onToggleManualPriorVersions) {
+      onToggleManualPriorVersions(nextVal);
+    } else if (onUpdateBranding) {
+      onUpdateBranding({ manualPriorVersionsEnabled: nextVal });
+    }
+
+    if (nextVal) {
+      // If turning ON, ensure we have initial slots based on current version if none exist
+      const currentVerNum =
+        typeof branding.updateVersion === "number"
+          ? branding.updateVersion
+          : parseInt(String(branding.updateVersion || 1), 10) || 1;
+
+      const existingNotes = branding.previousUpdateNotes || [];
+      if (existingNotes.length === 0 && currentVerNum > 1) {
+        const initialSlots: Array<{ version: number | string; notes: string; text?: string }> = [];
+        for (let v = currentVerNum - 1; v >= 1; v--) {
+          initialSlots.push({ version: v, notes: "" });
+        }
+        if (onUpdateManualPriorVersions) {
+          onUpdateManualPriorVersions(initialSlots);
+        } else if (onUpdateBranding) {
+          onUpdateBranding({ manualPriorVersionsEnabled: true, previousUpdateNotes: initialSlots });
+        }
+      }
+    }
+  };
+
+  const handleUpdatePriorNote = (index: number, newNoteText: string) => {
+    const currentList = [...(branding.previousUpdateNotes || [])];
+    if (currentList[index]) {
+      currentList[index] = { ...currentList[index], notes: newNoteText };
+      if (onUpdateManualPriorVersions) {
+        onUpdateManualPriorVersions(currentList);
+      } else if (onUpdateBranding) {
+        onUpdateBranding({ previousUpdateNotes: currentList });
+      }
+    }
+  };
+
+  const handleUpdatePriorVersionNumber = (index: number, newVersion: string | number) => {
+    const currentList = [...(branding.previousUpdateNotes || [])];
+    if (currentList[index]) {
+      currentList[index] = { ...currentList[index], version: newVersion };
+      if (onUpdateManualPriorVersions) {
+        onUpdateManualPriorVersions(currentList);
+      } else if (onUpdateBranding) {
+        onUpdateBranding({ previousUpdateNotes: currentList });
+      }
+    }
+  };
+
+  const handleAddPriorVersionSlot = (customVer?: number | string) => {
+    const currentList = [...(branding.previousUpdateNotes || [])];
+    let nextVer: number | string = customVer !== undefined ? customVer : 1;
+    if (customVer === undefined) {
+      if (currentList.length > 0) {
+        const nums = currentList.map((item) => parseInt(String(item.version), 10)).filter((n) => !isNaN(n));
+        const minVal = nums.length > 0 ? Math.min(...nums) : 2;
+        nextVer = minVal > 1 ? minVal - 1 : (nums.length > 0 ? Math.max(...nums) + 1 : 1);
+      } else {
+        const currentVerNum =
+          typeof branding.updateVersion === "number"
+            ? branding.updateVersion
+            : parseInt(String(branding.updateVersion || 1), 10) || 1;
+        nextVer = currentVerNum > 1 ? currentVerNum - 1 : 1;
+      }
+    }
+    const updated = [...currentList, { version: nextVer, notes: "" }];
+    if (onUpdateManualPriorVersions) {
+      onUpdateManualPriorVersions(updated);
+    } else if (onUpdateBranding) {
+      onUpdateBranding({ previousUpdateNotes: updated });
+    }
+  };
+
+  const handleRemovePriorVersionSlot = (index: number) => {
+    const currentList = [...(branding.previousUpdateNotes || [])];
+    currentList.splice(index, 1);
+    if (onUpdateManualPriorVersions) {
+      onUpdateManualPriorVersions(currentList);
+    } else if (onUpdateBranding) {
+      onUpdateBranding({ previousUpdateNotes: currentList });
+    }
+  };
+
+  const handleAutoFillPriorSlots = () => {
+    const currentVerNum =
+      typeof branding.updateVersion === "number"
+        ? branding.updateVersion
+        : parseInt(String(branding.updateVersion || 1), 10) || 1;
+
+    if (currentVerNum <= 1) {
+      setPresetFeedback("Current version is v1. Increase update version to v2+ to auto-generate prior slots.");
+      setTimeout(() => setPresetFeedback(null), 3000);
+      return;
+    }
+
+    const slots: Array<{ version: number | string; notes: string; text?: string }> = [];
+    for (let v = currentVerNum - 1; v >= 1; v--) {
+      const existing = (branding.previousUpdateNotes || []).find(
+        (p) => String(p.version) === String(v)
+      );
+      slots.push({ version: v, notes: existing ? existing.notes : "" });
+    }
+
+    if (onUpdateManualPriorVersions) {
+      onUpdateManualPriorVersions(slots);
+    } else if (onUpdateBranding) {
+      onUpdateBranding({ previousUpdateNotes: slots });
+    }
+    setPresetFeedback(`Generated slots for v${currentVerNum - 1} down to v1.`);
+    setTimeout(() => setPresetFeedback(null), 2500);
+  };
+
+  const handleLoadPriorVersionsFromHistory = () => {
+    const currentVerNum =
+      typeof branding.updateVersion === "number"
+        ? branding.updateVersion
+        : parseInt(String(branding.updateVersion || 1), 10) || 1;
+    const historyNotes = getStoredPreviousUpdateNotes(
+      roster.technicianName,
+      weekInfo.formattedRange,
+      currentVerNum
+    );
+    if (historyNotes && historyNotes.length > 0) {
+      if (onUpdateManualPriorVersions) {
+        onUpdateManualPriorVersions(historyNotes);
+      } else if (onUpdateBranding) {
+        onUpdateBranding({ previousUpdateNotes: historyNotes });
+      }
+      setPresetFeedback(`Loaded ${historyNotes.length} prior version note(s) from Saved Email History!`);
+      setTimeout(() => setPresetFeedback(null), 3500);
+    } else {
+      setPresetFeedback("No prior version notes found in Saved History for this technician and week.");
+      setTimeout(() => setPresetFeedback(null), 3500);
+    }
+  };
+
+  const handleClearAllManualPriorVersions = () => {
+    if (onUpdateManualPriorVersions) {
+      onUpdateManualPriorVersions([]);
+    } else if (onUpdateBranding) {
+      onUpdateBranding({ previousUpdateNotes: [] });
+    }
+    setPresetFeedback("Cleared all manual prior version notes.");
+    setTimeout(() => setPresetFeedback(null), 2500);
   };
 
   const handleRemoveAttachment = (id: string) => {
     const updated = attachments.filter((a) => a.id !== id);
     updateAttachments(updated);
-    if (updated.length === 0) {
-      setInheritedAttachmentInfo(null);
-    }
   };
 
   const handleClearAllAttachments = () => {
     updateAttachments([]);
-    setInheritedAttachmentInfo(null);
     setPresetFeedback("Cleared all attachments.");
     setTimeout(() => setPresetFeedback(null), 2500);
   };
@@ -700,22 +800,6 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
           onUpdateBranding({ updateVersion: nextVer });
         }
       }
-
-      // Auto-fetch attachments from the most recent prior email in saved history
-      const priorAtts = getMostRecentPriorAttachments(techName, workWeek, nextVer);
-      if (priorAtts.attachments && priorAtts.attachments.length > 0) {
-        updateAttachments(priorAtts.attachments);
-        const verLabel = priorAtts.sourceVersion !== undefined
-          ? (String(priorAtts.sourceVersion).toLowerCase().startsWith("v") || String(priorAtts.sourceVersion).toLowerCase().startsWith("update")
-              ? String(priorAtts.sourceVersion)
-              : `v${priorAtts.sourceVersion}`)
-          : `v${nextVer - 1}`;
-        setInheritedAttachmentInfo({
-          sourceVersion: verLabel,
-          count: priorAtts.attachments.length,
-          sourceSubject: priorAtts.sourceSubject,
-        });
-      }
     } else {
       setAutoVersionNotice(null);
       lastAutoSyncedKeyRef.current = currentKey;
@@ -760,6 +844,7 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
         emailUpdatesEnabled: branding.emailUpdatesEnabled,
         updateVersion: branding.updateVersion,
         updateNotes: branding.updateNotes,
+        manualPriorVersionsEnabled: branding.manualPriorVersionsEnabled,
         previousUpdateNotes: resolveStackedPreviousUpdateNotes(branding, roster),
         sundaySundayEnabled: branding.sundaySundayEnabled,
         overlappingSchedulesEnabled: branding.overlappingSchedulesEnabled,
@@ -974,10 +1059,20 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
       onUpdateBranding({ updateVersion: newVersion });
     }
 
-    // When version changes with Email Updates enabled, automatically fetch attachments from the most recent prior email
-    // e.g. if user sets incoming email to v3, fetch from v2, not v1 or initial
-    if (branding.emailUpdatesEnabled) {
-      fetchRecentEmailAttachments(newVersion, true);
+    if (branding.emailUpdatesEnabled && branding.manualPriorVersionsEnabled) {
+      const currentList = branding.previousUpdateNotes || [];
+      // If user had no manual slots, or has version > 1 and list is empty, initialize slots
+      if (currentList.length === 0 && newVersion > 1) {
+        const slots: Array<{ version: number | string; notes: string; text?: string }> = [];
+        for (let v = newVersion - 1; v >= 1; v--) {
+          slots.push({ version: v, notes: "" });
+        }
+        if (onUpdateManualPriorVersions) {
+          onUpdateManualPriorVersions(slots);
+        } else if (onUpdateBranding) {
+          onUpdateBranding({ previousUpdateNotes: slots });
+        }
+      }
     }
   };
 
@@ -1321,6 +1416,26 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
               }`}
             />
           </button>
+
+          {/* Input Prior Versions Toggle (Available when Email Updates is toggled ON) */}
+          {branding.emailUpdatesEnabled && (
+            <button
+              onClick={() => handleToggleManualPriorVersions(!branding.manualPriorVersionsEnabled)}
+              className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer shadow-xs ${
+                branding.manualPriorVersionsEnabled
+                  ? "bg-amber-400 hover:bg-amber-300 text-amber-950 border-amber-300 font-bold ring-2 ring-amber-400/30"
+                  : "bg-white/95 hover:bg-white text-zinc-800 border-white/80"
+              }`}
+              title="When toggled ON: Allows you to manually input notes for prior email versions (e.g. for v3, input notes for v2 and v1) that stack underneath the active update banner."
+            >
+              <span className="font-bold">Input Prior Versions</span>
+              <span
+                className={`w-2 h-2 rounded-full transition ${
+                  branding.manualPriorVersionsEnabled ? "bg-amber-950 animate-pulse" : "bg-zinc-300"
+                }`}
+              />
+            </button>
+          )}
 
           {onToggleAnytime && (
             <button
@@ -2043,34 +2158,225 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
               </div>
             </div>
 
-            {/* Stacked Previous Version Notes (Unhighlighted & Unbold with red 'added'/'removed') */}
-            {resolveStackedPreviousUpdateNotes(branding, roster).length > 0 && (
-              <div className="pt-1.5 border-t border-yellow-300/80 space-y-1">
-                <div className="flex items-center justify-between text-[11px] font-bold text-yellow-950">
-                  <span className="flex items-center space-x-1">
-                    <span>Stacked Prior Version Notes (Auto-stacked, Unhighlighted & Unbold in email):</span>
+            {/* Prior Versions Configuration Bar */}
+            <div className="pt-2 border-t border-yellow-300/80 flex flex-col md:flex-row md:items-center justify-between gap-2 text-xs">
+              <div className="flex items-center space-x-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => handleToggleManualPriorVersions(!branding.manualPriorVersionsEnabled)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center space-x-2 border cursor-pointer shadow-2xs ${
+                    branding.manualPriorVersionsEnabled
+                      ? "bg-amber-400 hover:bg-amber-300 text-amber-950 border-amber-500 ring-2 ring-amber-400/30"
+                      : "bg-white hover:bg-amber-50 text-zinc-700 border-yellow-400"
+                  }`}
+                  title="Toggle manual input of prior email version notes (e.g. for v3, manually specify v2 and v1 notes)."
+                >
+                  <span>Input Prior Versions</span>
+                  <span
+                    className={`w-2 h-2 rounded-full transition ${
+                      branding.manualPriorVersionsEnabled ? "bg-amber-950 animate-pulse" : "bg-zinc-300"
+                    }`}
+                  />
+                </button>
+                <span className="text-[11px] text-yellow-900">
+                  {branding.manualPriorVersionsEnabled ? (
+                    <span className="font-semibold text-amber-950">
+                      Manual mode active: input custom notes for prior versions stacked underneath this update.
+                    </span>
+                  ) : (
+                    <span>
+                      Stacked notes are automatically read from Saved Email History (if available).
+                    </span>
+                  )}
+                </span>
+              </div>
+
+              {branding.manualPriorVersionsEnabled && (
+                <div className="flex items-center space-x-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleAddPriorVersionSlot()}
+                    className="bg-white hover:bg-amber-100 text-amber-950 border border-amber-400 font-bold px-2 py-1 rounded text-[11px] transition cursor-pointer shadow-2xs flex items-center space-x-1"
+                    title="Add another prior version note slot"
+                  >
+                    <Plus className="w-3 h-3 text-amber-700" />
+                    <span>Add Prior Version</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAutoFillPriorSlots}
+                    className="bg-white hover:bg-amber-100 text-amber-950 border border-amber-400 font-bold px-2 py-1 rounded text-[11px] transition cursor-pointer shadow-2xs"
+                    title="Auto-fill slots for all prior versions (from current version - 1 down to v1)"
+                  >
+                    Auto-Fill Prior Slots
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLoadPriorVersionsFromHistory}
+                    className="bg-white hover:bg-amber-100 text-amber-950 border border-amber-400 font-medium px-2 py-1 rounded text-[11px] transition cursor-pointer shadow-2xs"
+                    title="Copy any existing prior notes from Saved Email History into manual fields"
+                  >
+                    Copy from History
+                  </button>
+                  {(branding.previousUpdateNotes || []).length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleClearAllManualPriorVersions}
+                      className="text-zinc-500 hover:text-red-700 text-[11px] px-1.5 py-0.5 rounded transition cursor-pointer underline"
+                      title="Clear all manual prior version slots"
+                    >
+                      Clear All
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* MANUAL PRIOR VERSIONS INPUT SECTION (When Input Prior Versions is ON) */}
+            {branding.manualPriorVersionsEnabled && (
+              <div className="bg-amber-50/70 border border-amber-300/90 rounded-lg p-3 space-y-2.5 animate-in fade-in duration-150">
+                <div className="flex items-center justify-between text-[11px] font-bold text-amber-950 border-b border-amber-200/80 pb-1.5">
+                  <span className="flex items-center space-x-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    <span>Manual Prior Version Notes (Stacked underneath active banner):</span>
                   </span>
-                  <span className="text-[10px] font-medium text-yellow-800">
-                    {resolveStackedPreviousUpdateNotes(branding, roster).length} prior note(s) preserved
+                  <span className="text-[10px] font-medium text-amber-800">
+                    {(branding.previousUpdateNotes || []).length} prior version slot(s)
                   </span>
                 </div>
-                <div className="space-y-1">
-                  {resolveStackedPreviousUpdateNotes(branding, roster).map((prev, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-white/90 border border-yellow-200 rounded px-2.5 py-1 text-xs text-zinc-900 flex items-center justify-between gap-2 shadow-2xs font-normal"
-                    >
-                      <div className="min-w-0 flex-1 truncate">
-                        <span className="font-bold text-zinc-700 mr-1.5 text-[11px]">
-                          UPDATE v{prev.version}:
-                        </span>
-                        <span>
-                          Schedule is updated.{" "}
-                          {prev.notes?.trim() && (
-                            <span>
-                              {prev.notes
-                                .split(/\b(added|removed)\b/gi)
-                                .map((chunk, i) =>
+
+                {(branding.previousUpdateNotes || []).length === 0 ? (
+                  <div className="bg-white border border-dashed border-amber-300 rounded-lg p-3 text-center space-y-2">
+                    <p className="text-xs text-amber-950 font-semibold">
+                      No prior version notes added yet for v{branding.updateVersion || 1}.
+                    </p>
+                    <p className="text-[11px] text-zinc-600 max-w-md mx-auto">
+                      Since this email is <strong>v{branding.updateVersion || 1}</strong>, you can add notes for prior versions (e.g. v{typeof branding.updateVersion === "number" && branding.updateVersion > 1 ? branding.updateVersion - 1 : 1} and older) so they appear stacked underneath the active update banner.
+                    </p>
+                    <div className="flex items-center justify-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleAutoFillPriorSlots}
+                        className="bg-amber-400 hover:bg-amber-300 text-amber-950 font-bold px-3 py-1.5 rounded text-xs transition cursor-pointer shadow-xs"
+                      >
+                        Auto-fill Prior Slots
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAddPriorVersionSlot()}
+                        className="bg-white hover:bg-amber-100 text-amber-950 font-bold border border-amber-400 px-3 py-1.5 rounded text-xs transition cursor-pointer"
+                      >
+                        + Add Custom Slot
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {(branding.previousUpdateNotes || []).map((prev, idx) => (
+                      <div
+                        key={idx}
+                        className="bg-white border border-amber-300 rounded-lg p-2.5 shadow-2xs space-y-2"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-[11px] font-bold text-amber-950">Prior Version:</span>
+                            <div className="flex items-center">
+                              <span className="bg-amber-200 border border-r-0 border-amber-400 text-amber-950 font-bold px-2 py-1 rounded-l text-xs select-none">
+                                v
+                              </span>
+                              <input
+                                type="text"
+                                value={prev.version}
+                                onChange={(e) => handleUpdatePriorVersionNumber(idx, e.target.value)}
+                                className="w-16 bg-white border border-amber-400 rounded-r px-2 py-1 text-xs font-bold text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                                placeholder="2"
+                              />
+                            </div>
+                            <span className="text-zinc-500 text-xs font-mono hidden sm:inline">
+                              UPDATE v{prev.version}: Schedule is updated.
+                            </span>
+                          </div>
+
+                          <div className="flex items-center space-x-1 text-[10px] flex-wrap">
+                            <span className="text-zinc-400 text-[10px] mr-0.5">Presets:</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleUpdatePriorNote(
+                                  idx,
+                                  "I added installs in COD List-104 (470268 & 470269) to your Wednesday schedule."
+                                )
+                              }
+                              className="bg-zinc-100 hover:bg-amber-100 text-zinc-700 hover:text-amber-950 px-1.5 py-0.5 rounded border border-zinc-200 transition cursor-pointer"
+                              title="Insert COD List-104 preset"
+                            >
+                              + COD 104
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleUpdatePriorNote(idx, "I added Friday route.")
+                              }
+                              className="bg-zinc-100 hover:bg-amber-100 text-zinc-700 hover:text-amber-950 px-1.5 py-0.5 rounded border border-zinc-200 transition cursor-pointer"
+                              title="Insert Friday route preset"
+                            >
+                              + Friday
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleUpdatePriorNote(
+                                  idx,
+                                  "I removed cancelled sites from your Tuesday teardown list."
+                                )
+                              }
+                              className="bg-zinc-100 hover:bg-amber-100 text-zinc-700 hover:text-amber-950 px-1.5 py-0.5 rounded border border-zinc-200 transition cursor-pointer"
+                              title="Insert removed sites preset"
+                            >
+                              + Removed
+                            </button>
+                            {prev.notes && (
+                              <button
+                                type="button"
+                                onClick={() => handleUpdatePriorNote(idx, "")}
+                                className="text-zinc-400 hover:text-zinc-700 underline text-[10px] ml-1 cursor-pointer"
+                              >
+                                Clear
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleRemovePriorVersionSlot(idx)}
+                              className="text-zinc-400 hover:text-red-600 p-1 rounded transition ml-1 cursor-pointer"
+                              title="Remove this prior version"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-medium text-zinc-600 mb-0.5">
+                            Prior Version Note <span className="text-zinc-400">(Unhighlighted & unbold in email; words "added" and "removed" are colored red)</span>:
+                          </label>
+                          <input
+                            type="text"
+                            value={prev.notes || ""}
+                            onChange={(e) => handleUpdatePriorNote(idx, e.target.value)}
+                            placeholder="e.g. I added installs in COD List-104 (470268 & 470269) to your Wednesday schedule."
+                            className="w-full bg-zinc-50 focus:bg-white border border-zinc-300 focus:border-amber-500 rounded px-2.5 py-1.5 text-xs text-zinc-900 focus:outline-hidden transition"
+                          />
+                        </div>
+
+                        {/* Live Email Preview of this Prior Version Line */}
+                        <div className="flex items-center gap-1.5 text-[11px] text-zinc-600 pt-0.5">
+                          <span className="font-semibold text-zinc-500 text-[10px] shrink-0">Email Preview:</span>
+                          <div className="bg-zinc-100 px-2 py-0.5 rounded text-xs text-zinc-900 font-normal truncate flex-1 border border-zinc-200">
+                            <span className="font-bold text-zinc-800 mr-1">UPDATE v{prev.version}:</span>
+                            Schedule is updated.{" "}
+                            {prev.notes?.trim() && (
+                              <span>
+                                {prev.notes.split(/\b(added|removed)\b/gi).map((chunk, i) =>
                                   /^(added|removed)$/i.test(chunk) ? (
                                     <span key={i} className="text-[#FF0000] font-bold">
                                       {chunk}
@@ -2079,70 +2385,82 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
                                     chunk
                                   )
                                 )}
-                            </span>
-                          )}
-                        </span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <span className="text-[10px] bg-zinc-100 text-zinc-600 px-1.5 py-0.5 rounded font-mono font-bold shrink-0">
-                        v{prev.version}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Incoming Email Update Attachments Control */}
-            <div className="pt-2 border-t border-yellow-300/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-              <div className="flex items-center space-x-2 flex-wrap min-w-0">
-                <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-yellow-400 text-yellow-950 font-bold shadow-2xs">
-                  <Paperclip className="w-3 h-3 text-yellow-950" />
-                </span>
-                <span className="font-bold text-yellow-950">Update Attachments:</span>
-                {attachments.length > 0 ? (
-                  <span className="text-yellow-900 flex items-center space-x-1.5 flex-wrap">
-                    <span className="font-bold bg-white text-zinc-900 px-1.5 py-0.5 rounded border border-yellow-400 font-mono text-[11px]">
-                      {attachments.length} {attachments.length === 1 ? "file" : "files"}
-                    </span>
-                    {inheritedAttachmentInfo ? (
-                      <span className="bg-amber-200/90 text-amber-950 font-bold px-2 py-0.5 rounded-full border border-amber-400 text-[10px] flex items-center space-x-1">
-                        <span>Fetched from {inheritedAttachmentInfo.sourceVersion}</span>
-                        <span className="text-amber-800 font-normal">(most recent prior version)</span>
+            {/* AUTOMATIC STACKED NOTES (When Input Prior Versions is OFF) */}
+            {!branding.manualPriorVersionsEnabled && (
+              <div>
+                {resolveStackedPreviousUpdateNotes(branding, roster).length > 0 ? (
+                  <div className="pt-1.5 border-t border-yellow-300/80 space-y-1">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-yellow-950">
+                      <span className="flex items-center space-x-1">
+                        <span>Stacked Prior Version Notes (Auto-stacked from history, Unhighlighted & Unbold in email):</span>
                       </span>
-                    ) : (
-                      <span className="text-yellow-800 text-[11px]">
-                        (Attached to this incoming update)
+                      <span className="text-[10px] font-medium text-yellow-800">
+                        {resolveStackedPreviousUpdateNotes(branding, roster).length} prior note(s) preserved
                       </span>
-                    )}
-                  </span>
+                    </div>
+                    <div className="space-y-1">
+                      {resolveStackedPreviousUpdateNotes(branding, roster).map((prev, idx) => (
+                        <div
+                          key={idx}
+                          className="bg-white/90 border border-yellow-200 rounded px-2.5 py-1 text-xs text-zinc-900 flex items-center justify-between gap-2 shadow-2xs font-normal"
+                        >
+                          <div className="min-w-0 flex-1 truncate">
+                            <span className="font-bold text-zinc-700 mr-1.5 text-[11px]">
+                              UPDATE v{prev.version}:
+                            </span>
+                            <span>
+                              Schedule is updated.{" "}
+                              {prev.notes?.trim() && (
+                                <span>
+                                  {prev.notes
+                                    .split(/\b(added|removed)\b/gi)
+                                    .map((chunk, i) =>
+                                      /^(added|removed)$/i.test(chunk) ? (
+                                        <span key={i} className="text-[#FF0000] font-bold">
+                                          {chunk}
+                                        </span>
+                                      ) : (
+                                        chunk
+                                      )
+                                    )}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          <span className="text-[10px] bg-zinc-100 text-zinc-600 px-1.5 py-0.5 rounded font-mono font-bold shrink-0">
+                            v{prev.version}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 ) : (
-                  <span className="text-yellow-800 italic text-[11px]">
-                    No attachments currently attached for this update.
-                  </span>
+                  <div className="text-[11px] text-yellow-900/80 italic pt-1 flex items-center justify-between">
+                    <span>
+                      No prior versions found in Saved Email History for this technician and week.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleManualPriorVersions(true)}
+                      className="text-yellow-950 font-bold underline hover:text-amber-800 cursor-pointer ml-2"
+                    >
+                      Turn on "Input Prior Versions" to enter notes manually &rarr;
+                    </button>
+                  </div>
                 )}
               </div>
-
-              <div className="flex items-center space-x-1.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const currentVer = branding.updateVersion || 1;
-                    fetchRecentEmailAttachments(currentVer, true);
-                  }}
-                  className="bg-white hover:bg-yellow-100 text-yellow-950 border border-yellow-400 font-bold px-2.5 py-1 rounded-md text-[11px] transition cursor-pointer shadow-2xs flex items-center space-x-1"
-                  title={`Fetch attachments from the most recent prior email in saved history (e.g. for v3 fetch from v2, not older versions).`}
-                >
-                  <RotateCcw className="w-3 h-3 text-yellow-700" />
-                  <span>
-                    Fetch Attachments (
-                    {extractVersionNumber(branding.updateVersion || 1) > 1
-                      ? `v${extractVersionNumber(branding.updateVersion || 1) - 1}`
-                      : "Initial v0"}
-                    )
-                  </span>
-                </button>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       )}
@@ -2547,29 +2865,6 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
             />
             <button
               type="button"
-              onClick={() => {
-                const currentVer = branding.updateVersion || 1;
-                fetchRecentEmailAttachments(currentVer, true);
-              }}
-              className="bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold px-2.5 py-1.5 rounded-lg text-xs transition cursor-pointer border border-amber-300 flex items-center space-x-1.5 shadow-2xs"
-              title={`Fetch attachments from the most recent email version in Saved History for ${cleanTechnicianName(roster.technicianName)}, omitting older versions.`}
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
-              <span>
-                Fetch from Prior Email
-                {branding.emailUpdatesEnabled && (
-                  <span className="font-normal text-amber-800 ml-1">
-                    (
-                    {extractVersionNumber(branding.updateVersion || 1) > 1
-                      ? `v${extractVersionNumber(branding.updateVersion || 1) - 1}`
-                      : "Initial"}
-                    )
-                  </span>
-                )}
-              </span>
-            </button>
-            <button
-              type="button"
               onClick={() => fileInputRef.current?.click()}
               className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs transition cursor-pointer shadow-xs flex items-center space-x-1.5"
             >
@@ -2614,17 +2909,6 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
             </div>
           ) : (
             <div className="space-y-2">
-              {inheritedAttachmentInfo && (
-                <div className="px-2.5 py-1 bg-amber-50 border border-amber-200 rounded-md text-[11px] text-amber-950 flex items-center justify-between">
-                  <span className="flex items-center space-x-1.5">
-                    <Paperclip className="w-3 h-3 text-amber-700" />
-                    <span className="font-semibold">
-                      Attachments fetched from most recent email ({inheritedAttachmentInfo.sourceVersion})
-                    </span>
-                  </span>
-                  <span className="text-[10px] text-amber-700 italic">Older versions omitted</span>
-                </div>
-              )}
               <div className="flex flex-wrap items-center gap-2">
               {attachments.map((att) => (
                 <div
