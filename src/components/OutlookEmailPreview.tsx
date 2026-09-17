@@ -2,7 +2,6 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import {
   Monitor,
   Smartphone,
-  Copy,
   Check,
   Download,
   ExternalLink,
@@ -65,8 +64,6 @@ import {
   getWeekDateRange,
   formatNoteTextWithPrefix,
   downloadEmlFile,
-  getOutlook365WebUrl,
-  copyRichHtmlToClipboard,
   cleanTechnicianName,
   resolveStackedPreviousUpdateNotes,
   autoDetectAdditionalNotesForRoster,
@@ -235,7 +232,6 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
   onClearPreview,
 }) => {
   const [viewMode, setViewMode] = useState<"desktop" | "mobile">("desktop");
-  const [copied, setCopied] = useState(false);
   const [selectedNoteDay, setSelectedNoteDay] = useState<string>("Monday");
   const [noteInputText, setNoteInputText] = useState<string>("");
   const [customPresets, setCustomPresets] = useState<NotePreset[]>([]);
@@ -1166,27 +1162,10 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
   };
 
   // --- Export & Dispatch Actions with Local Storage Tracking ---
-  const handleCopyRichHtml = async () => {
-    const success = await copyRichHtmlToClipboard(htmlContent, plainTextContent);
-    if (success) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-      onRecordDispatch("Clipboard", "Delivered");
-      recordGeneratedEmailToStorage("Clipboard");
-    }
-  };
-
   const handleDownloadEml = () => {
     downloadEmlFile(roster, branding, "exact_nds_template", attachments);
     onRecordDispatch("Outlook EML", "Exported");
     recordGeneratedEmailToStorage("Outlook EML");
-  };
-
-  const handleOpenOutlookWeb = () => {
-    const url = getOutlook365WebUrl(roster, branding);
-    window.open(url, "_blank");
-    onRecordDispatch("Outlook Web", "Exported");
-    recordGeneratedEmailToStorage("Outlook Web");
   };
 
   const handleManualMarkGenerated = () => {
@@ -2846,26 +2825,6 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
             <span>Clear Preview</span>
           </button>
 
-          {/* Copy HTML (Outlook) Button */}
-          <button
-            type="button"
-            onClick={handleCopyRichHtml}
-            className="flex items-center space-x-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg border border-emerald-700 shadow-xs transition cursor-pointer"
-            title="Copies the rich HTML formatted email ready to paste directly into Outlook desktop or web"
-          >
-            {copied ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-white" />
-                <span>Copied to Outlook!</span>
-              </>
-            ) : (
-              <>
-                <Copy className="w-3.5 h-3.5 text-white" />
-                <span>Copy HTML (Outlook)</span>
-              </>
-            )}
-          </button>
-
           {/* Manual Save / Mark as Generated (Yellow color) */}
           <button
             type="button"
@@ -2886,17 +2845,6 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
           >
             <Download className="w-3.5 h-3.5 text-white" />
             <span>Download Outlook (.EML)</span>
-          </button>
-
-          {/* Open in Outlook 365 Web */}
-          <button
-            type="button"
-            onClick={handleOpenOutlookWeb}
-            className="flex items-center space-x-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 rounded-lg border border-indigo-700 shadow-xs transition cursor-pointer"
-            title="Open Outlook Web composer in a new tab"
-          >
-            <ExternalLink className="w-3.5 h-3.5 text-white" />
-            <span>Outlook Web</span>
           </button>
         </div>
       </div>
