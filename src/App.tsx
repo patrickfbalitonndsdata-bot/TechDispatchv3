@@ -205,11 +205,26 @@ export default function App() {
   };
 
   const toggleEmailUpdates = (val: boolean) => {
-    setBranding((prev) => ({ ...prev, emailUpdatesEnabled: val }));
+    setBranding((prev) => ({
+      ...prev,
+      emailUpdatesEnabled: val,
+      // If Email Updates is toggled off, also turn off manual prior versions
+      manualPriorVersionsEnabled: val ? prev.manualPriorVersionsEnabled : false,
+    }));
   };
 
   const updateEmailUpdateDetails = (version: number | string, notes: string) => {
     setBranding((prev) => ({ ...prev, updateVersion: version, updateNotes: notes }));
+  };
+
+  const toggleManualPriorVersions = (val: boolean) => {
+    setBranding((prev) => ({ ...prev, manualPriorVersionsEnabled: val }));
+  };
+
+  const updateManualPriorVersions = (
+    notes: Array<{ version: number | string; notes: string; text?: string }>
+  ) => {
+    setBranding((prev) => ({ ...prev, previousUpdateNotes: notes }));
   };
 
   const toggleAdditionalNotes = (val: boolean) => {
@@ -538,6 +553,8 @@ export default function App() {
                 onToggleCodExclusive={toggleCodExclusive}
                 onToggleEmailUpdates={toggleEmailUpdates}
                 onUpdateEmailUpdateDetails={updateEmailUpdateDetails}
+                onToggleManualPriorVersions={toggleManualPriorVersions}
+                onUpdateManualPriorVersions={updateManualPriorVersions}
                 onToggleAdditionalNotes={toggleAdditionalNotes}
                 onUpdateAdditionalNotes={updateAdditionalNotes}
                 onToggleSundaySunday={toggleSundaySunday}
