@@ -96,6 +96,9 @@ import {
   getStoredInitialEmailLinks,
   getMostRecentPriorAttachments,
   extractVersionNumber,
+  extractRecordVersionNumber,
+  getMostRecentSavedEmail,
+  NDS_SAVED_EMAILS_EVENT,
 } from "../utils/generatedEmailStorage";
 import { GeneratedEmailsHistoryModal } from "./GeneratedEmailsHistoryModal";
 import { CodSightDistanceModal } from "./CodSightDistanceModal";
@@ -263,7 +266,10 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
     tech: string;
     count: number;
     suggestedVersion: number;
+    recentVersion?: number;
+    recentVersionLabel?: string;
   } | null>(null);
+  const lastAutoSyncedKeyRef = useRef<string>("");
   const [manualSaveSuccess, setManualSaveSuccess] = useState(false);
 
   // COD Sight Distance Modal State
@@ -387,10 +393,20 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
     }
 
     if (nextVal) {
-      // When Email Updates is toggled ON, automatically fetch attachments from the most recent prior email
-      // e.g. for incoming v3, fetch from v2
-      const currentVer = branding.updateVersion || 1;
-      fetchRecentEmailAttachments(currentVer, true);
+      // When Email Updates is toggled ON, follow the version from the recent saved history
+      // e.g. If the recent saved email is tagged v1, the newly generated will automatically become v2
+      // even if the historical email has been a manually edited version.
+      const rec = getRecommendedUpdateVersion(roster.technicianName, weekInfo.formattedRange);
+      const targetVersion = rec.count > 0 ? rec.recommendedVersion : (branding.updateVersion || 1);
+
+      if (onUpdateEmailUpdateDetails) {
+        onUpdateEmailUpdateDetails(targetVersion, branding.updateNotes || "");
+      } else if (onUpdateBranding) {
+        onUpdateBranding({ emailUpdatesEnabled: true, updateVersion: targetVersion });
+      }
+
+      // Automatically fetch attachments from the most recent prior email (targetVersion - 1)
+      fetchRecentEmailAttachments(targetVersion, true);
     }
   };
 
@@ -632,29 +648,42 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
     return records;
   }, []);
 
-  // Initial load of stored emails
+  // Initial load of stored emails & listen for storage updates across the app
   useEffect(() => {
     refreshStoredEmails();
+
+    const handleCustomUpdate = () => {
+      refreshStoredEmails();
+    };
+    window.addEventListener(NDS_SAVED_EMAILS_EVENT, handleCustomUpdate);
+    return () => {
+      window.removeEventListener(NDS_SAVED_EMAILS_EVENT, handleCustomUpdate);
+    };
   }, [refreshStoredEmails]);
 
   const [clearNotice, setClearNotice] = useState<string | null>(null);
 
-  // Auto-detect and recommend email update version when technician or work week changes
+  // Auto-detect and recommend email update version when technician, work week, or saved emails change
   useEffect(() => {
     const techName = roster.technicianName;
     const workWeek = weekInfo.formattedRange;
     if (!techName) return;
 
     const rec = getRecommendedUpdateVersion(techName, workWeek);
+    const currentKey = `${cleanTechnicianName(techName).toLowerCase()}|${workWeek}|${rec.mostRecentVersion}`;
+
     if (rec.count > 0) {
       // Prior generated emails exist for this tech in this work week
-      // e.g. 1 previous email (Version 0) -> nextVer = 1 (UPDATE v1)
-      // 2 previous emails (v0, v1) -> nextVer = 2 (UPDATE v2)
+      // Follow the version from the recent saved history (recent + 1):
+      // e.g. If the recent saved email is tagged v1, nextVer = 2 (UPDATE v2)
+      // e.g. If the recent saved email was manually set to v3, nextVer = 4 (UPDATE v4)
       const nextVer = rec.recommendedVersion;
       setAutoVersionNotice({
         tech: cleanTechnicianName(techName),
         count: rec.count,
         suggestedVersion: nextVer,
+        recentVersion: rec.mostRecentVersion,
+        recentVersionLabel: rec.mostRecentVersionLabel,
       });
 
       // Auto-toggle ON the Email Updates feature when stored history exists
@@ -665,7 +694,10 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
           onUpdateBranding({ emailUpdatesEnabled: true, updateVersion: nextVer });
         }
       }
-      if (branding.updateVersion === undefined || Number(branding.updateVersion) < nextVer) {
+
+      // If switching to this technician/week, or if a new saved version was recorded, or if updateVersion is unset or 0:
+      if (lastAutoSyncedKeyRef.current !== currentKey || branding.updateVersion === undefined || branding.updateVersion === 0) {
+        lastAutoSyncedKeyRef.current = currentKey;
         if (onUpdateEmailUpdateDetails) {
           onUpdateEmailUpdateDetails(nextVer, branding.updateNotes || "");
         } else if (onUpdateBranding) {
@@ -673,7 +705,7 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
         }
       }
 
-      // Auto-fetch attachments from the most recent prior email in saved history (e.g. for v3, fetch from v2, not older)
+      // Auto-fetch attachments from the most recent prior email in saved history
       const priorAtts = getMostRecentPriorAttachments(techName, workWeek, nextVer);
       if (priorAtts.attachments && priorAtts.attachments.length > 0) {
         updateAttachments(priorAtts.attachments);
@@ -690,8 +722,9 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
       }
     } else {
       setAutoVersionNotice(null);
+      lastAutoSyncedKeyRef.current = currentKey;
     }
-  }, [roster.technicianName, weekInfo.formattedRange]);
+  }, [roster.technicianName, weekInfo.formattedRange, storedEmails]);
 
   // Record a generated email into localStorage with full rendered content
   const recordGeneratedEmailToStorage = (
@@ -906,11 +939,13 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
     // Re-check auto-version recommendation
     const rec = getRecommendedUpdateVersion(roster.technicianName, weekInfo.formattedRange);
     if (rec.count > 0) {
-      const nextVer = rec.count + 1;
+      const nextVer = rec.recommendedVersion;
       setAutoVersionNotice({
         tech: cleanTechnicianName(roster.technicianName),
         count: rec.count,
         suggestedVersion: nextVer,
+        recentVersion: rec.mostRecentVersion,
+        recentVersionLabel: rec.mostRecentVersionLabel,
       });
       if (onUpdateEmailUpdateDetails) {
         onUpdateEmailUpdateDetails(nextVer, branding.updateNotes || "");
@@ -1506,8 +1541,9 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
             </span>
             <div>
               <span className="font-bold">Auto-Version Active:</span> Found{" "}
-              <strong>{autoVersionNotice.count}</strong> previous email generation(s) in local storage for{" "}
-              <strong>{autoVersionNotice.tech}</strong> ({weekInfo.formattedRange}). With initial email as <strong>Version 0</strong>, automatically set to{" "}
+              <strong>{autoVersionNotice.count}</strong> previous saved email(s) for{" "}
+              <strong>{autoVersionNotice.tech}</strong> ({weekInfo.formattedRange}). Following recent saved history (tagged{" "}
+              <strong>{autoVersionNotice.recentVersionLabel || `v${autoVersionNotice.recentVersion ?? 0}`}</strong>), automatically set to{" "}
               <span className="bg-yellow-300 px-1.5 py-0.5 rounded font-black border border-yellow-400">
                 UPDATE v{branding.updateVersion || autoVersionNotice.suggestedVersion}
               </span>
