@@ -1,13 +1,23 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <!-- System App Brand Background: Blue-600 Rounded Squircle -->
-  <rect width="64" height="64" rx="14" fill="#2563eb" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+  </defs>
+  <!-- Rounded Squircle Base matching App Brand -->
+  <rect width="64" height="64" rx="14" fill="url(#blueGrad)" />
   
-  <!-- Subtle Top Highlight -->
-  <rect x="2" y="2" width="60" height="60" rx="12" stroke="rgba(255,255,255,0.25)" stroke-width="2" fill="none" />
+  <!-- Subtle inner border highlight -->
+  <rect x="1.5" y="1.5" width="61" height="61" rx="12.5" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5" fill="none" />
   
-  <!-- System App Mail Icon (Centered Lucide Mail in pure white) -->
-  <g transform="translate(14, 14) scale(1.5)" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
-    <rect width="20" height="16" x="2" y="4" rx="2" fill="#2563eb" />
-    <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-  </g>
+  <!-- White Mail Envelope Body -->
+  <rect x="11" y="18" width="42" height="28" rx="5" fill="#ffffff" />
+  
+  <!-- Envelope Flap Crease in Blue -->
+  <path d="M12 21 L32 36 L52 21" stroke="#1d4ed8" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+  
+  <!-- Subtle Bottom Fold Shadows for Depth -->
+  <path d="M12 45 L25 33" stroke="#cbd5e1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+  <path d="M52 45 L39 33" stroke="#cbd5e1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none" />
 </svg>
