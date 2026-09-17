@@ -81,6 +81,8 @@ import {
   MACHINE_LOCS_TO_CAM_NOTE,
   PEDS_SIGHT_DISTANCE_NOTE,
   MAINLINE_STUDY_NOTE,
+  RADAR_STUDY_NOTE,
+  isRadarStudyNote,
 } from "../utils/outlookTemplateGenerator";
 import {
   GeneratedEmailRecord,
@@ -117,6 +119,12 @@ const DEFAULT_NOTE_PRESETS: NotePreset[] = [
     id: "preset-speed-teardown",
     title: "⚡ SPEED - Teardown (File Naming)",
     text: SPEED_TEARDOWN_NOTE,
+    isBuiltIn: true,
+  },
+  {
+    id: "preset-radar-study",
+    title: "RADAR STUDY",
+    text: RADAR_STUDY_NOTE,
     isBuiltIn: true,
   },
   {
@@ -840,7 +848,7 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
     itemId: string,
     direction: "up" | "down"
   ) => {
-    const currentItems = buildDayScheduleItems(dayKey, baseDayName, dayOrders, branding);
+    const currentItems = buildDayScheduleItems(dayKey, baseDayName, dayOrders, branding, roster);
     const itemIds = currentItems.map((it) => it.id);
     const currentIndex = itemIds.indexOf(itemId);
     if (currentIndex < 0) return;
@@ -1708,18 +1716,18 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
               <label className="block text-[11px] font-bold text-emerald-950 mb-1">
                 Note Text:
               </label>
-              <input
-                type="text"
+              <textarea
+                rows={noteInputText.includes("\n") ? 3 : 1}
                 value={noteInputText}
                 onChange={(e) => setNoteInputText(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
+                  if (e.key === "Enter" && !e.shiftKey && !noteInputText.includes("\n")) {
                     e.preventDefault();
                     handleAddAdditionalNote();
                   }
                 }}
                 placeholder="e.g. Note: Continue installing locations not finished yesterday until all inventories have been used up."
-                className="w-full bg-white border border-emerald-400 rounded-lg px-3 py-1.5 text-xs text-zinc-900 placeholder:text-zinc-400 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 shadow-2xs"
+                className="w-full bg-white border border-emerald-400 rounded-lg px-3 py-1.5 text-xs text-zinc-900 placeholder:text-zinc-400 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 shadow-2xs resize-y"
               />
             </div>
 
@@ -1853,7 +1861,13 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
                       <span className="bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded text-[10px] shrink-0">
                         {getDayDisplayName(note.day)}
                       </span>
-                      {note.text.includes("See correct Format:") ? (
+                      {isRadarStudyNote(note.text) ? (
+                        <span className="text-xs truncate">
+                          <span className="bg-[#00FF00] text-black font-bold italic px-1.5 py-0.5 rounded shadow-2xs">
+                            NOTE: 100 samples total, or 2hr max per interval (whichever comes first)...
+                          </span>
+                        </span>
+                      ) : note.text.includes("See correct Format:") ? (
                         <span className="text-xs truncate">
                           <span className="bg-[#00FF00] text-black font-bold italic px-1.5 py-0.5 rounded-l shadow-2xs">
                             {note.text.substring(0, note.text.indexOf("See correct Format:")).trim()}
@@ -2264,7 +2278,8 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
                   def.key,
                   def.baseDayName,
                   dayOrders,
-                  branding
+                  branding,
+                  roster
                 );
 
                 if (dayScheduleItems.length === 0) return null;
