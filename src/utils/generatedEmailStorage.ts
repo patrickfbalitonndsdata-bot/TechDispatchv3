@@ -308,11 +308,117 @@ export function getGeneratedEmailsForTechAndWeek(
 }
 
 /**
- * Calculates recommendation for email updates based on previously generated emails stored locally:
- * If 0 previous emails -> Initial email (Version 0, isUpdate: false)
- * If 1 previous email (Version 0) -> Next email is Version 1 (UPDATE v1, isUpdate: true, recommendedVersion: 1)
- * If 2 previous emails (Version 0, UPDATE v1) -> Next email is Version 2 (UPDATE v2, isUpdate: true, recommendedVersion: 2)
- * If N previous emails -> Next email is Version N (UPDATE vN, isUpdate: true, recommendedVersion: N)
+ * Extracts a numeric version value from a version string or number.
+ * e.g. "Version 0" -> 0, "UPDATE v1" -> 1, "v2" -> 2, "Initial" -> 0, 3 -> 3, "UPDATE v1 (Manual)" -> 1
+ */
+export function extractVersionNumber(version: string | number | undefined | null): number {
+  if (version === undefined || version === null) return 0;
+  if (typeof version === "number") return isNaN(version) ? 0 : version;
+  const str = String(version).trim();
+  if (!str) return 0;
+  const lower = str.toLowerCase();
+  if (lower === "initial" || lower === "version 0" || lower === "0" || lower === "v0") return 0;
+
+  // Check explicit UPDATE vX or vX patterns
+  const updateMatch = lower.match(/update\s*v?(\d+)/i);
+  if (updateMatch) {
+    const n = parseInt(updateMatch[1], 10);
+    if (!isNaN(n)) return n;
+  }
+  const vMatch = lower.match(/(?:^|\b)v(\d+)\b/i);
+  if (vMatch) {
+    const n = parseInt(vMatch[1], 10);
+    if (!isNaN(n)) return n;
+  }
+  const verWordMatch = lower.match(/(?:^|\b)version\s*(\d+)\b/i);
+  if (verWordMatch) {
+    const n = parseInt(verWordMatch[1], 10);
+    if (!isNaN(n)) return n;
+  }
+  // Generic trailing/standalone digit
+  const anyDigitMatch = lower.match(/(\d+)/);
+  if (anyDigitMatch) {
+    const n = parseInt(anyDigitMatch[1], 10);
+    if (!isNaN(n)) return n;
+  }
+  return 0;
+}
+
+/**
+ * Robustly inspects an entire GeneratedEmailRecord to determine what version it is tagged with,
+ * checking brandingConfig.updateVersion, record.version, subject line ("UPDATE vX"), and notes.
+ * This ensures that whether a version was manually entered or automatically tagged, it is accurately detected.
+ */
+export function extractRecordVersionNumber(rec: GeneratedEmailRecord | undefined | null): number {
+  if (!rec) return 0;
+
+  // 1. Check brandingConfig.updateVersion first
+  if (
+    rec.brandingConfig?.updateVersion !== undefined &&
+    rec.brandingConfig?.updateVersion !== null &&
+    rec.brandingConfig?.updateVersion !== ""
+  ) {
+    const num = extractVersionNumber(rec.brandingConfig.updateVersion);
+    if (num > 0) return num;
+  }
+
+  // 2. Check record.version
+  if (rec.version !== undefined && rec.version !== null && rec.version !== "") {
+    const num = extractVersionNumber(rec.version);
+    if (num > 0) return num;
+  }
+
+  // 3. Check record.subject for UPDATE v{X} pattern
+  if (rec.subject) {
+    const subjMatch = rec.subject.match(/\bUPDATE\s+v?(\d+)\b/i);
+    if (subjMatch) {
+      const num = parseInt(subjMatch[1], 10);
+      if (!isNaN(num) && num > 0) return num;
+    }
+  }
+
+  // 4. Check notes / updateNotes
+  const noteStr = rec.brandingConfig?.updateNotes || rec.notes || "";
+  if (noteStr) {
+    const noteMatch = noteStr.match(/\bUPDATE\s+v?(\d+)\b/i);
+    if (noteMatch) {
+      const num = parseInt(noteMatch[1], 10);
+      if (!isNaN(num) && num > 0) return num;
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * Retrieves the most recent saved email record from history for a technician and work week.
+ */
+export function getMostRecentSavedEmail(
+  technicianName: string,
+  workWeek: string
+): GeneratedEmailRecord | null {
+  const history = getGeneratedEmailsForTechAndWeek(technicianName, workWeek);
+  if (history.length === 0) return null;
+
+  const sorted = [...history].sort((a, b) => {
+    const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+    const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+    if (timeB !== timeA) return timeB - timeA;
+    return 0;
+  });
+
+  return sorted[0];
+}
+
+/**
+ * Calculates recommendation for email updates following the historical email of the generated email:
+ * - Sorts saved history by recency (most recent saved record first).
+ * - Reads the tagged version from that most recent saved record (whether manually or automatically edited).
+ * - The newly generated email automatically follows the version from the recent saved history (recent + 1):
+ *   e.g. If the recent saved email is tagged version 1 (v1), the new generated becomes version 2 (v2).
+ *   e.g. If the recent saved email is tagged version 2 (v2), the new generated becomes version 3 (v3).
+ *   e.g. If the recent saved email is tagged initial (v0), the new generated becomes version 1 (v1).
+ *   e.g. If 0 previous emails exist in saved history, recommendedVersion starts at 1.
  */
 export function getRecommendedUpdateVersion(
   technicianName: string,
@@ -322,6 +428,9 @@ export function getRecommendedUpdateVersion(
   recommendedVersion: number;
   isUpdate: boolean;
   history: GeneratedEmailRecord[];
+  mostRecentRecord?: GeneratedEmailRecord;
+  mostRecentVersion: number;
+  mostRecentVersionLabel: string;
 } {
   const history = getGeneratedEmailsForTechAndWeek(technicianName, workWeek);
   const count = history.length;
@@ -332,31 +441,34 @@ export function getRecommendedUpdateVersion(
       recommendedVersion: 1, // If they enable updates on first email, start with v1
       isUpdate: false,
       history,
+      mostRecentVersion: 0,
+      mostRecentVersionLabel: "None",
     };
   }
 
+  // Sort history by recency (newest timestamp first).
+  const sorted = [...history].sort((a, b) => {
+    const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+    const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+    if (timeB !== timeA) return timeB - timeA;
+    return 0;
+  });
+
+  const mostRecent = sorted[0];
+  const recentVersion = extractRecordVersionNumber(mostRecent);
+  // The newly generated will automatically become recentVersion + 1
+  const recommendedVersion = Math.max(1, recentVersion + 1);
+  const mostRecentVersionLabel = recentVersion > 0 ? `v${recentVersion}` : "v0 (Initial)";
+
   return {
     count,
-    recommendedVersion: count, // 1 previous email (v0) -> next email is version 1
+    recommendedVersion,
     isUpdate: true,
-    history,
+    history: sorted,
+    mostRecentRecord: mostRecent,
+    mostRecentVersion: recentVersion,
+    mostRecentVersionLabel,
   };
-}
-
-/**
- * Extracts a numeric version value from a version string or number.
- * e.g. "Version 0" -> 0, "UPDATE v1" -> 1, "v2" -> 2, "Initial" -> 0, 3 -> 3
- */
-export function extractVersionNumber(version: string | number | undefined | null): number {
-  if (version === undefined || version === null) return 0;
-  if (typeof version === "number") return version;
-  const str = String(version).trim().toLowerCase();
-  if (str === "initial" || str === "version 0" || str === "0") return 0;
-  const match = str.match(/(?:v|version|update\s*v?)?\s*(\d+)/i);
-  if (match) {
-    return parseInt(match[1], 10);
-  }
-  return 0;
 }
 
 /**
@@ -376,8 +488,8 @@ export function getStoredPreviousUpdateNotes(
 
   // Sort history by version descending
   const sorted = [...history].sort((a, b) => {
-    const verA = extractVersionNumber(a.version);
-    const verB = extractVersionNumber(b.version);
+    const verA = extractRecordVersionNumber(a);
+    const verB = extractRecordVersionNumber(b);
     if (verB !== verA) return verB - verA;
     return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
   });
@@ -628,7 +740,7 @@ export function getMostRecentPriorAttachments(
   // If incomingVerNum is 2, candidates are 1, 0
   // If incomingVerNum is 1, candidates are 0 (initial)
   let priorRecords = history.filter((rec) => {
-    const ver = extractVersionNumber(rec.version);
+    const ver = extractRecordVersionNumber(rec);
     if (incomingVerNum > 0) {
       return ver < incomingVerNum;
     }
@@ -649,8 +761,8 @@ export function getMostRecentPriorAttachments(
   // 1. Primary: highest version number descending (e.g. v2 > v1 > v0)
   // 2. Secondary: latest timestamp descending
   priorRecords.sort((a, b) => {
-    const verA = extractVersionNumber(a.version);
-    const verB = extractVersionNumber(b.version);
+    const verA = extractRecordVersionNumber(a);
+    const verB = extractRecordVersionNumber(b);
     if (verB !== verA) {
       return verB - verA;
     }
